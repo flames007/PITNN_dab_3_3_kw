@@ -842,30 +842,74 @@ def plot_all(hist,dab):
     plt.tight_layout(); plt.savefig("pitnn_parity.png",dpi=150); plt.close()
     print("  Saved: pitnn_parity.png")
 
-    phi_ex=[PI*.85,PI*.85,.60]
-    t,vab,nvcd,vL,iL=dab.simulate_current(*phi_ex,N_pts=800); t_us=t*1e6
-    fig,axes=plt.subplots(3,1,figsize=(11,8),sharex=True)
-    axes[0].plot(t_us,vab,lw=1.5,label="v_ab"); axes[0].plot(t_us,nvcd,lw=1.5,ls="--",label="n·v_cd")
-    axes[0].axhline(0,color="gray",lw=0.5)
-    axes[0].set(ylabel="Voltage (V)",title=f"TPS waveforms — P={dab.compute_power(*phi_ex):.0f}W  Mode {dab.classify_mode(*phi_ex)}")
-    axes[0].legend()
-    axes[1].plot(t_us,vL,color="green",lw=1.5); axes[1].axhline(0,color="gray",lw=0.5)
-    axes[1].set(ylabel="v_L (V)")
-    axes[2].plot(t_us,iL,color="red",lw=2); axes[2].fill_between(t_us,iL,alpha=.15,color="red")
-    axes[2].axhline(0,color="gray",lw=0.5); axes[2].set(xlabel="Time (µs)",ylabel="i_L (A)")
-    plt.tight_layout(); plt.savefig("pitnn_waveforms.png",dpi=150); plt.close()
-    print("  Saved: pitnn_waveforms.png")
+    plt.rcParams.update({
+    "font.size": 13,
+    "axes.titlesize": 18,
+    "axes.labelsize": 15,
+    "legend.fontsize": 13,
+    "xtick.labelsize": 12,
+    "ytick.labelsize": 12,
+    })
 
-    phi12=PI*.95; phi3s=np.linspace(.05,2.,100)
-    Ps=[dab.compute_power(phi12,phi12,p3) for p3 in phi3s]
-    Pm=[K_POWER*(phi12/PI)*p3*(1-p3/B_POWER) for p3 in phi3s]
-    fig,ax=plt.subplots(figsize=(8,4))
-    ax.plot(phi3s,[p/1000 for p in Ps],lw=2,label="Simulation")
-    ax.plot(phi3s,[p/1000 for p in Pm],lw=1.5,ls="--",label="Calibrated model")
-    ax.axvline(PHI3_MAX,color="blue",ls=":",lw=1.5,label=f"φ₃_max={PHI3_MAX}")
-    ax.set(xlabel="φ₃ (rad)",ylabel="P (kW)",title="Power vs φ₃  |  φ₁=φ₂=0.95π")
-    ax.grid(True,alpha=.3); ax.legend()
-    plt.tight_layout(); plt.savefig("pitnn_power_surface.png",dpi=150); plt.close()
+    wave_cases = [
+        ("low_power",  [PI*0.95, PI*0.95, 0.10]),
+        ("mid_power",  [PI*0.95, PI*0.95, 0.34]),
+        ("high_power", [PI*0.95, PI*0.95, 0.63]),
+        ("off_nominal",[2.8274,  2.8274,  0.80]),
+    ]
+
+    for case_name, phi_ex in wave_cases:
+        t, vab, nvcd, vL, iL = dab.simulate_current(*phi_ex, N_pts=800)
+        P_ex = dab.compute_power(*phi_ex)
+        mode_ex = dab.classify_mode(*phi_ex)
+
+        fig, ax = plt.subplots(3, 1, figsize=(12, 8), sharex=True)
+
+        ax[0].step(t * 1e6, vab, where="post", lw=2.2, label="v_ab")
+        ax[0].step(t * 1e6, nvcd, where="post", linestyle="--", lw=2.2, label="n·v_cd")
+        ax[0].axhline(0, color="black", lw=1.0, alpha=0.7)
+        ax[0].set_ylabel("Voltage (V)")
+        ax[0].set_title(f"TPS waveforms — P={P_ex:.0f}W  Mode {mode_ex}")
+        ax[0].legend()
+        ax[0].grid(True, alpha=0.3, linestyle="--")
+
+        ax[1].step(t * 1e6, vL, where="post", lw=2.2)
+        ax[1].axhline(0, color="black", lw=1.0, alpha=0.7)
+        ax[1].set_ylabel("v_L (V)")
+        ax[1].grid(True, alpha=0.3, linestyle="--")
+
+        ax[2].plot(t * 1e6, iL, color="red", lw=2.4)
+        ax[2].fill_between(t * 1e6, iL, 0, alpha=0.12, color="red")
+        ax[2].axhline(0, color="black", lw=1.0, alpha=0.7)
+        ax[2].set_ylabel("i_L (A)")
+        ax[2].set_xlabel("Time (µs)")
+        ax[2].grid(True, alpha=0.3, linestyle="--")
+
+        plt.tight_layout(pad=1.2)
+        plt.savefig(f"pitnn_waveforms_{case_name}.png", dpi=220, bbox_inches="tight")
+        plt.close()
+
+        print(f"  Saved: pitnn_waveforms_{case_name}.png")
+
+    phi12 = PI * 0.95
+    phi3s = np.linspace(0.05, 2.0, 100)
+    Ps = [dab.compute_power(phi12, phi12, p3) for p3 in phi3s]
+    Pm = [K_POWER * (phi12 / PI) * p3 * (1 - p3 / B_POWER) for p3 in phi3s]
+
+    fig, ax = plt.subplots(figsize=(10, 5))
+    ax.plot(phi3s, [p / 1000 for p in Ps], lw=2.4, label="Simulation")
+    ax.plot(phi3s, [p / 1000 for p in Pm], lw=2.2, ls="--", label="Calibrated model")
+    ax.axvline(PHI3_MAX, color="blue", ls=":", lw=2.0, label=f"φ₃_max={PHI3_MAX}")
+    ax.set_xlabel("φ₃ (rad)")
+    ax.set_ylabel("P (kW)")
+    ax.set_title("Power vs φ₃  |  φ₁=φ₂=0.95π")
+    ax.grid(True, alpha=0.3, linestyle="--")
+    ax.legend()
+
+    plt.tight_layout(pad=1.2)
+    plt.savefig("pitnn_power_surface.png", dpi=220, bbox_inches="tight")
+    plt.close()
+
     print("  Saved: pitnn_power_surface.png")
 
 

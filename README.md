@@ -1,3 +1,8 @@
+# Run
+python pitnn_dab.py --video Video_Project.mp4 # If using oscilloscope video as training data alongside the synthetic dataset
+
+python pitnn_dab.py # If using only the synthetic dataset
+
 # 1. Default — demo mode, no arguments needed
 python pitnn_deploy.py
 
