@@ -1,0 +1,254 @@
+PITNN DAB CONVERTER — SOURCE CODE LICENSE
+=========================================================================
+
+Physics-Informed Transformer Neural Network for Real-Time Triple Phase
+Shift Optimal Modulation in Dual Active Bridge Converters
+
+Copyright (c) 2026 Chukwuemeka Nzeadibe
+Mississippi State University, Department of Electrical & Computer Engineering
+
+=========================================================================
+CONTACT
+=========================================================================
+
+For licensing enquiries, collaboration requests, or commercial use
+authorisation, contact the author directly through Mississippi State
+University.
+
+=========================================================================
+DEFINITIONS
+=========================================================================
+
+"Software" means the source code, trained model weights, dataset
+generation scripts, video ingestion pipeline, deployment scripts, and
+associated documentation files in this repository, including but not
+limited to: pitnn_dab.py, pitnn_deploy.py, and any checkpoint files
+produced by running them.
+
+"Author" means Chukwuemeka Nzeadibe.
+
+"Non-Commercial Use" means use for personal study, academic research,
+university coursework, and not-for-profit educational purposes only,
+where no revenue is generated directly or indirectly from the Software.
+
+"Commercial Use" means any use that generates revenue, is embedded in a
+product or service, is used by a for-profit organisation in its
+operations, or is used to develop intellectual property intended for
+commercialisation.
+
+"Derivative Work" means any modification, adaptation, translation,
+enhancement, or work that is based upon or incorporates any part of the
+Software.
+
+=========================================================================
+GRANT OF LICENCE — NON-COMMERCIAL USE
+=========================================================================
+
+Permission is hereby granted, free of charge, to any person obtaining a
+copy of this Software, to use, copy, and study the Software solely for
+Non-Commercial purposes, subject to ALL of the following conditions:
+
+  1. ATTRIBUTION REQUIRED
+     The above copyright notice and this licence notice shall be
+     included in all copies or substantial portions of the Software.
+
+  2. PAPER CITATION REQUIRED
+     Any publication, thesis, dissertation, conference paper, technical
+     report, or other academic work that uses, extends, references, or
+     is informed by this Software or the methods it implements must
+     cite the following paper:
+
+         Nzeadibe, C. (2026). "Physics-Informed Transformer Neural
+         Network Control for Real-Time Triple Phase Shift Optimal
+         Modulation in Dual Active Bridge Converters." Mississippi
+         State University.
+
+  3. NO COMMERCIAL USE
+     Non-Commercial users may NOT use the Software for Commercial Use
+     without separate written authorisation from the Author. See the
+     Commercial Use section below.
+
+  4. MODIFICATIONS MUST BE DISCLOSED
+     If you modify the Software and distribute or publish the modified
+     version, you must:
+       (a) Clearly state that the Software has been modified.
+       (b) Include a description of what was changed.
+       (c) Retain all original copyright and licence notices.
+       (d) Distribute the modified source code under these same terms.
+
+  5. NO MISREPRESENTATION
+     You may not represent the Software, or any Derivative Work, as
+     your own original work. The original authorship must remain
+     attributed to Chukwuemeka Nzeadibe, Mississippi State University.
+
+=========================================================================
+GRANT OF LICENCE — COMMERCIAL USE
+=========================================================================
+
+Commercial Use of the Software is NOT permitted without prior written
+authorisation from the Author.
+
+If you wish to use the Software for Commercial Use, including but not
+limited to:
+
+  - Embedding the PITNN model or any part of the Software in a product
+    or industrial system
+  - Selling, licensing, or sublicensing the Software or Derivative Works
+  - Using the Software within a for-profit company's internal operations
+    or R&D pipeline
+  - Developing intellectual property, patents, or trade secrets based
+    on the Software's methods
+
+you must contact the Author to negotiate a separate Commercial Licence
+Agreement. The Author reserves the right to grant or withhold commercial
+licences at their sole discretion and to set terms including royalties,
+attribution requirements, and field-of-use restrictions.
+
+=========================================================================
+GRANT OF LICENCE — ACADEMIC INSTITUTIONS
+=========================================================================
+
+Universities, colleges, and non-profit research institutions may freely
+use the Software for teaching, student projects, and academic research,
+provided:
+
+  (a) The paper citation requirement above is satisfied in any resulting
+      publication.
+  (b) The Software is not used in sponsored research where a commercial
+      entity will own or exclusively licence the results, without first
+      obtaining a Commercial Licence from the Author.
+  (c) The Software is not redistributed to students or collaborators
+      outside the institution without including this licence in full.
+
+=========================================================================
+RESTRICTIONS — ALL USERS
+=========================================================================
+
+Regardless of the type of licence under which you use the Software,
+the following are strictly prohibited:
+
+  1. Removing or altering copyright notices, attribution statements,
+     or this licence from any copy of the Software.
+
+  2. Using the Author's name, the name "Mississippi State University",
+     or any associated logos to endorse or promote products or services
+     derived from this Software without prior written permission.
+
+  3. Claiming ownership of the Software or its underlying methods,
+     including the PITNN architecture, the TPS label solver, or the
+     video waveform ingestion pipeline.
+
+  4. Using the Software in safety-critical applications — including
+     medical devices, nuclear systems, aviation, and autonomous weapons
+     — without independent validation and authorisation from the Author.
+
+  5. Training or fine-tuning other machine learning models using the
+     Software's synthetic dataset generation pipeline to produce
+     competing commercial products without a Commercial Licence.
+
+=========================================================================
+INTELLECTUAL PROPERTY
+=========================================================================
+
+The Author retains all intellectual property rights in the Software,
+including rights to the following novel contributions:
+
+  - The fixed-phi12 TPS modulation strategy that creates a monotone
+    Pref-to-phi3 mapping (r = 0.994) enabling reliable Transformer
+    learning.
+
+  - The calibrated power model P = K*(phi12/pi)*phi3*(1-phi3/B) with
+    constants fitted from numerical simulation for high-power DAB
+    converters.
+
+  - The VideoWaveformExtractor pipeline for extracting TPS modulation
+    parameters from oscilloscope and simulation screen-recording videos
+    without code modification.
+
+  - The combined synthetic-plus-video training architecture that merges
+    simulation-generated labels with real hardware measurements.
+
+  - The deployment architecture separating training (pitnn_dab.py) from
+    inference (pitnn_deploy.py) with a four-mode embedded deployment
+    controller.
+
+Nothing in this licence grants any rights to the underlying patents,
+trade secrets, or proprietary methods of Mississippi State University
+beyond the limited use rights described above.
+
+=========================================================================
+DISCLAIMER OF WARRANTIES
+=========================================================================
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, ACCURACY OF RESULTS,
+AND NON-INFRINGEMENT.
+
+THE AUTHOR MAKES NO WARRANTY THAT:
+  (a) THE SOFTWARE WILL MEET YOUR REQUIREMENTS;
+  (b) THE PHASE SHIFT PREDICTIONS WILL BE ACCURATE FOR YOUR SPECIFIC
+      CONVERTER HARDWARE;
+  (c) THE SOFTWARE WILL OPERATE WITHOUT INTERRUPTION OR ERROR;
+  (d) ANY ERRORS IN THE SOFTWARE WILL BE CORRECTED.
+
+=========================================================================
+LIMITATION OF LIABILITY
+=========================================================================
+
+IN NO EVENT SHALL THE AUTHOR OR MISSISSIPPI STATE UNIVERSITY BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+CONSEQUENTIAL DAMAGES (INCLUDING BUT NOT LIMITED TO PROCUREMENT OF
+SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; HARDWARE
+DAMAGE; PERSONAL INJURY; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR
+TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE
+USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+THIS LIMITATION APPLIES TO ALL USES OF THE SOFTWARE INCLUDING RESEARCH,
+COMMERCIAL, AND DEPLOYMENT ON PHYSICAL HARDWARE PROTOTYPES.
+
+=========================================================================
+SAFETY NOTICE
+=========================================================================
+
+This Software controls switching converters operating at high voltages
+(nominally 800V) and high currents (up to 200A). Improper use can cause
+electric shock, fire, equipment damage, or death.
+
+Users are solely responsible for:
+  - Independent validation of all model outputs before deploying on
+    physical hardware.
+  - Implementing appropriate hardware protection (overcurrent, over-
+    voltage, short-circuit protection) independent of this Software.
+  - Compliance with all applicable electrical safety standards and
+    regulations in their jurisdiction.
+  - Ensuring qualified electrical engineers review any physical
+    prototype that uses outputs from this Software.
+
+The Author and Mississippi State University accept no liability for
+damage, injury, or loss resulting from deployment of this Software on
+physical hardware.
+
+=========================================================================
+GOVERNING LAW
+=========================================================================
+
+This licence shall be governed by and construed in accordance with the
+laws of the State of Mississippi, United States of America, without
+regard to its conflict of law provisions.
+
+=========================================================================
+LICENCE SUMMARY  (informational only — full terms above apply)
+=========================================================================
+
+  Academic / personal use    PERMITTED with citation
+  Modify and share openly    PERMITTED with attribution + disclosure
+  Commercial use             REQUIRES written permission from Author
+  Remove copyright notices   PROHIBITED
+  Claim as your own work     PROHIBITED
+  Deploy on hardware         AT YOUR OWN RISK — see Safety Notice
+
+=========================================================================
+
+END OF LICENCE
