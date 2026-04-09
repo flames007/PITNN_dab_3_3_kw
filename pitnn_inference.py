@@ -89,17 +89,75 @@ class PITNNInference:
         self.model, self.mu, self.sigma, self.device = load_pitnn(
             model_path, mu_path, sigma_path, device
         )
-        # Rolling buffer: last SEQ_LEN normalised state vectors
+        # Rolling buffer initialised to zeros — call prime() before first step()
         self._buffer    = np.zeros((SEQ_LEN, N_FEAT), dtype=np.float32)
-        self._phi1_prev = PI * 0.95   # initial phi1 estimate (nominal)
-        self._phi2_prev = PI * 0.95   # initial phi2 estimate (nominal)
-        self._phi3_prev = 0.22        # initial phi3 estimate
+        self._phi1_prev = (PHI12_MIN + PHI12_MAX) / 2.0
+        self._phi2_prev = (PHI12_MIN + PHI12_MAX) / 2.0
+        self._phi3_prev = 0.22
+
+    def prime(self, V1: float, V2: float, Pref: float,
+              phi1_seed: float = None, phi2_seed: float = None,
+              phi3_seed: float = None):
+        """
+        Fill the 20-step history buffer with a plausible operating point
+        before the first real step() call.
+
+        The buffer must not start as all-zeros — the model was never trained
+        on zero-padded inputs and will produce stuck or incorrect outputs if
+        called cold. Prime with a physically reasonable seed instead.
+
+        phi1_seed is derived from Pref by inverting the approximate power
+        relationship: P ≈ K * (phi12/π) * phi3_peak.  Higher power → lower
+        phi12, mirroring what solve_optimal_phi() returns during training.
+
+        Parameters
+        ----------
+        V1, V2   : bus voltages (V)
+        Pref     : power reference (W)
+        phi1_seed, phi2_seed, phi3_seed : optional override angles (rad).
+        """
+        v_ratio = float(V1 * V2) / (V1_NOM * V2_NOM)
+
+        if phi1_seed is None:
+            # Approximate phi12 from Pref — mirrors solver: higher P → lower phi12.
+            # At P_max (~70kW nominal) phi12 ≈ PHI12_MIN; at light load ≈ PHI12_MAX.
+            P_max_approx = 105674.0 * v_ratio * (PHI12_MAX / PI) * 0.5 * (1 - 0.5 / 3.136)
+            # Linear interpolation across the valid phi12 range
+            frac = float(np.clip(Pref / max(P_max_approx, 1.0), 0.0, 1.0))
+            phi1_seed = float(PHI12_MAX - frac * (PHI12_MAX - PHI12_MIN))
+            phi1_seed = float(np.clip(phi1_seed, PHI12_MIN, PHI12_MAX))
+
+        if phi2_seed is None:
+            phi2_seed = phi1_seed
+
+        if phi3_seed is None:
+            # Estimate phi3 from Pref using the power model with the estimated phi12
+            K_eff = 105674.0 * v_ratio * (phi1_seed / PI)
+            phi3_seed = float(np.clip(Pref / max(K_eff, 1.0), PHI_MIN, PHI3_MAX))
+
+        iL_est = float(V1 * V2 / (V1_NOM * V2_NOM) * 10.7 * phi3_seed)
+
+        feat = np.array([V1, V2, iL_est,
+                         phi1_seed, phi2_seed, phi3_seed,
+                         Pref, v_ratio], dtype=np.float32)
+        feat_norm = self._normalise(feat)
+
+        # Fill entire buffer with this seed so all 20 steps look realistic
+        self._buffer[:] = feat_norm
+        self._phi1_prev = phi1_seed
+        self._phi2_prev = phi2_seed
+        self._phi3_prev = phi3_seed
 
     def reset(self):
-        """Clear history buffer. Call when starting a new scenario."""
+        """
+        Clear history buffer and prev-angle state.
+        Always call prime() immediately after reset() — do NOT call step()
+        on a zero buffer, the model was never trained on zero-padded inputs
+        and will produce stuck outputs.
+        """
         self._buffer    = np.zeros((SEQ_LEN, N_FEAT), dtype=np.float32)
-        self._phi1_prev = PI * 0.95
-        self._phi2_prev = PI * 0.95
+        self._phi1_prev = (PHI12_MIN + PHI12_MAX) / 2.0
+        self._phi2_prev = (PHI12_MIN + PHI12_MAX) / 2.0
         self._phi3_prev = 0.22
 
     def _normalise(self, feat: np.ndarray) -> np.ndarray:
@@ -231,11 +289,15 @@ def run_demo():
 
     for V1, V2, Pref, label in scenarios:
         ctrl.reset()
-        # Warm up the buffer with a plausible iL estimate
-        iL_est = float(V1 * V2 / (V1_NOM * V2_NOM) * 10.7 * 0.3)
 
-        # Run 5 cycles to fill the buffer before measuring
-        for _ in range(5):
+        # Prime the buffer with a physically realistic seed for this condition,
+        # then run a full SEQ_LEN warmup so every buffer slot is meaningful.
+        # Without this the Transformer sees mostly zeros which it was never
+        # trained on, producing stuck/incorrect phi1 outputs.
+        ctrl.prime(float(V1), float(V2), float(Pref))
+        iL_est = float(V1 * V2 / (V1_NOM * V2_NOM) * 10.7 * ctrl._phi3_prev)
+
+        for _ in range(SEQ_LEN):   # fill all 20 slots with real data
             ctrl.step(float(V1), float(V2), iL_est, float(Pref))
 
         # Timed inference
@@ -267,11 +329,19 @@ def integration_example():
     # Your real-time loop — call at fsw = 100kHz
     Pref = 20000.0   # W — from your outer PI voltage controller
 
+    # Prime the buffer before the first step — critical for correct predictions
+    ctrl.prime(V1=800.0, V2=800.0, Pref=Pref)
+
     for cycle in range(20):
         # ── READ SENSORS (replace with real ADC calls) ────────────────────
         V1_meas = 800.0 + (cycle % 3) * 1.5     # simulated noise
         V2_meas = 798.0 + (cycle % 2) * 1.0
         iL_meas = 27.5  + (cycle % 4) * 0.5
+
+        # Replace with actual ADC values
+        # V1_meas = adc.read(channel=0) * V1_SCALE
+        # V2_meas = adc.read(channel=1) * V2_SCALE
+        # iL_meas = adc.read(channel=2) * IL_SCALE
 
         # ── PITNN INFERENCE ───────────────────────────────────────────────
         phi1, phi2, phi3 = ctrl.step(V1_meas, V2_meas, iL_meas, Pref)
