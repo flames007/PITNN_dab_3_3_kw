@@ -39,7 +39,6 @@ Run a specific mode:
   python pitnn_deploy.py --mode closed_loop --Vref 800 --Pmax 50000
 """
 
-import math
 import time
 import argparse
 import numpy as np
@@ -49,8 +48,8 @@ import torch
 # pitnn_dab.py must be in the same directory (or on PYTHONPATH)
 from pitnn_dab import (
     # Constants
-    V1_NOM, V2_NOM, FSW, LK, N_TURNS, PI,
-    PHI_MIN, PHI12_MIN, PHI12_MAX, PHI12_FIXED, PHI3_MAX, K_POWER, B_POWER,
+    V1_NOM, V2_NOM, FSW, LK, PI,
+    PHI_MIN, PHI12_MIN, PHI12_MAX, PHI3_MAX,
     # Classes
     PITNN, DABPhysics, PITNNController,
 )
