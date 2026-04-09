@@ -27,15 +27,16 @@ import numpy as np
 # ─────────────────────────────────────────────────────────────────────────────
 # CONSTANTS  (must match values used during training)
 # ─────────────────────────────────────────────────────────────────────────────
-V1_NOM   = 800.0
-V2_NOM   = 800.0
-FSW      = 100e3
-PI       = 3.141592653589793
-PHI12    = PI * 0.95   # 2.9845 rad — fixed inner duty
-PHI_MIN  = 0.05
-PHI3_MAX = 1.50
-SEQ_LEN  = 20
-N_FEAT   = 8
+V1_NOM    = 800.0
+V2_NOM    = 800.0
+FSW       = 100e3
+PI        = 3.141592653589793
+PHI12_MIN = PI * 0.65   # 2.0420 rad — lower bound for phi1/phi2
+PHI12_MAX = PI * 0.99   # 3.1102 rad — upper bound for phi1/phi2
+PHI_MIN   = 0.02         # rad — lower bound for phi3
+PHI3_MAX  = 1.50
+SEQ_LEN   = 20
+N_FEAT    = 8
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -113,18 +114,22 @@ class PITNNOnnxInference:
         self._input_name  = self.session.get_inputs()[0].name
         self._output_name = self.session.get_outputs()[0].name
         self._buffer      = np.zeros((SEQ_LEN, N_FEAT), dtype=np.float32)
-        self._phi3_prev   = 0.22
+        self._phi1_prev   = PI * 0.95   # initial phi1 estimate (nominal)
+        self._phi2_prev   = PI * 0.95   # initial phi2 estimate (nominal)
+        self._phi3_prev   = 0.22        # initial phi3 estimate
 
     def reset(self):
         """Clear history buffer."""
         self._buffer    = np.zeros((SEQ_LEN, N_FEAT), dtype=np.float32)
+        self._phi1_prev = PI * 0.95
+        self._phi2_prev = PI * 0.95
         self._phi3_prev = 0.22
 
     def _normalise(self, feat: np.ndarray) -> np.ndarray:
         return ((feat - self.mu) / self.sigma).astype(np.float32)
 
     def step(self, V1: float, V2: float, iL: float, Pref: float,
-             phi3_prev: float = None) -> tuple:
+             phi_prev: tuple = None) -> tuple:
         """
         Run one inference step. Call once per switching cycle.
 
@@ -134,18 +139,26 @@ class PITNNOnnxInference:
         V2        : secondary bus voltage (V)
         iL        : inductor current (A)
         Pref      : power reference (W)
-        phi3_prev : previous phi3 (rad); uses internal state if None
+        phi_prev  : (phi1, phi2, phi3) previous outputs (rad); uses internal
+                    state if None
 
         Returns
         -------
-        (phi1, phi2, phi3) in radians
+        (phi1, phi2, phi3) in radians — all three independently predicted
+            phi1 ∈ [PHI12_MIN, PHI12_MAX]  — primary bridge inner duty
+            phi2 ∈ [PHI12_MIN, PHI12_MAX]  — secondary bridge inner duty
+            phi3 ∈ [PHI_MIN,   PHI3_MAX]   — external phase shift
         """
-        if phi3_prev is None:
-            phi3_prev = self._phi3_prev
+        if phi_prev is not None:
+            phi1_p, phi2_p, phi3_p = phi_prev
+        else:
+            phi1_p = self._phi1_prev
+            phi2_p = self._phi2_prev
+            phi3_p = self._phi3_prev
 
         v_ratio = float(V1 * V2) / (V1_NOM * V2_NOM)
         feat = np.array([
-            V1, V2, iL, PHI12, PHI12, phi3_prev, Pref, v_ratio
+            V1, V2, iL, phi1_p, phi2_p, phi3_p, Pref, v_ratio
         ], dtype=np.float32)
 
         self._buffer = np.roll(self._buffer, -1, axis=0)
@@ -161,6 +174,8 @@ class PITNNOnnxInference:
         phi1 = float(result[0])
         phi2 = float(result[1])
         phi3 = float(result[2])
+        self._phi1_prev = phi1
+        self._phi2_prev = phi2
         self._phi3_prev = phi3
         return phi1, phi2, phi3
 

@@ -26,15 +26,16 @@ import torch
 # ─────────────────────────────────────────────────────────────────────────────
 # CONSTANTS  (must match values used during training)
 # ─────────────────────────────────────────────────────────────────────────────
-V1_NOM   = 800.0    # V  — nominal primary bus voltage
-V2_NOM   = 800.0    # V  — nominal secondary bus voltage
-FSW      = 100e3    # Hz — switching frequency
-PI       = 3.141592653589793
-PHI12    = PI * 0.95     # = 2.9845 rad — fixed inner duty (phi1 = phi2)
-PHI_MIN  = 0.05          # rad — minimum phi3
-PHI3_MAX = 1.50          # rad — maximum phi3 (ascending branch ceiling)
-SEQ_LEN  = 20            # number of past switching cycles the model sees
-N_FEAT   = 8             # [V1, V2, iL, phi1, phi2, phi3, Pref, V1V2/Vnom2]
+V1_NOM    = 800.0    # V  — nominal primary bus voltage
+V2_NOM    = 800.0    # V  — nominal secondary bus voltage
+FSW       = 100e3    # Hz — switching frequency
+PI        = 3.141592653589793
+PHI12_MIN = PI * 0.65   # 2.0420 rad — lower bound for phi1/phi2
+PHI12_MAX = PI * 0.99   # 3.1102 rad — upper bound for phi1/phi2
+PHI_MIN   = 0.02         # rad — lower bound for phi3
+PHI3_MAX  = 1.50         # rad — upper bound for phi3
+SEQ_LEN   = 20           # number of past switching cycles the model sees
+N_FEAT    = 8            # [V1, V2, iL, phi1, phi2, phi3, Pref, V1V2/Vnom2]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -61,7 +62,8 @@ def load_pitnn(model_path="pitnn_scripted.pt",
 
     print(f"[PITNN] Ready on {device}")
     print(f"[PITNN] Input features: [V1, V2, iL, φ1, φ2, φ3, Pref, V1·V2/V²nom]")
-    print(f"[PITNN] φ1=φ2 fixed at {PHI12:.4f} rad | φ3 ∈ [{PHI_MIN}, {PHI3_MAX}] rad")
+    print(f"[PITNN] φ1,φ2 ∈ [{PHI12_MIN:.4f}, {PHI12_MAX:.4f}] rad  (predicted)")
+    print(f"[PITNN] φ3    ∈ [{PHI_MIN:.4f},   {PHI3_MAX:.4f}]  rad  (predicted)")
     return model, mu, sigma, device
 
 
@@ -88,12 +90,16 @@ class PITNNInference:
             model_path, mu_path, sigma_path, device
         )
         # Rolling buffer: last SEQ_LEN normalised state vectors
-        self._buffer  = np.zeros((SEQ_LEN, N_FEAT), dtype=np.float32)
-        self._phi3_prev = 0.22   # initial phi3 estimate
+        self._buffer    = np.zeros((SEQ_LEN, N_FEAT), dtype=np.float32)
+        self._phi1_prev = PI * 0.95   # initial phi1 estimate (nominal)
+        self._phi2_prev = PI * 0.95   # initial phi2 estimate (nominal)
+        self._phi3_prev = 0.22        # initial phi3 estimate
 
     def reset(self):
         """Clear history buffer. Call when starting a new scenario."""
         self._buffer    = np.zeros((SEQ_LEN, N_FEAT), dtype=np.float32)
+        self._phi1_prev = PI * 0.95
+        self._phi2_prev = PI * 0.95
         self._phi3_prev = 0.22
 
     def _normalise(self, feat: np.ndarray) -> np.ndarray:
@@ -101,7 +107,7 @@ class PITNNInference:
         return ((feat - self.mu) / self.sigma).astype(np.float32)
 
     def step(self, V1: float, V2: float, iL: float, Pref: float,
-             phi3_prev: float = None) -> tuple:
+             phi_prev: tuple = None) -> tuple:
         """
         Run one PITNN inference step.
 
@@ -111,22 +117,28 @@ class PITNNInference:
         V2        : float — secondary DC bus voltage (V)
         iL        : float — inductor current (A)
         Pref      : float — power reference from outer control loop (W)
-        phi3_prev : float — previous phi3 output (rad); uses internal state if None
+        phi_prev  : (phi1, phi2, phi3) previous outputs (rad); uses internal
+                    state if None
 
         Returns
         -------
-        (phi1, phi2, phi3) : floats in radians
-            phi1 = phi2 = PHI12 (fixed)
-            phi3 ∈ [PHI_MIN, PHI3_MAX]  — apply to gate drive
+        (phi1, phi2, phi3) : floats in radians — all three independently predicted
+            phi1 ∈ [PHI12_MIN, PHI12_MAX]  — primary bridge inner duty
+            phi2 ∈ [PHI12_MIN, PHI12_MAX]  — secondary bridge inner duty
+            phi3 ∈ [PHI_MIN,   PHI3_MAX]   — external phase shift → gate drive
         """
-        if phi3_prev is None:
-            phi3_prev = self._phi3_prev
+        if phi_prev is not None:
+            phi1_p, phi2_p, phi3_p = phi_prev
+        else:
+            phi1_p = self._phi1_prev
+            phi2_p = self._phi2_prev
+            phi3_p = self._phi3_prev
 
-        # Build 8-feature state vector
+        # Build 8-feature state vector using previous predicted angles
         v_ratio = float(V1 * V2) / (V1_NOM * V2_NOM)
         feat = np.array([
             V1, V2, iL,
-            PHI12, PHI12, phi3_prev,
+            phi1_p, phi2_p, phi3_p,
             Pref, v_ratio
         ], dtype=np.float32)
 
@@ -142,6 +154,8 @@ class PITNNInference:
         phi1 = float(phi_out[0])
         phi2 = float(phi_out[1])
         phi3 = float(phi_out[2])
+        self._phi1_prev = phi1
+        self._phi2_prev = phi2
         self._phi3_prev = phi3
         return phi1, phi2, phi3
 
@@ -212,8 +226,8 @@ def run_demo():
     ]
 
     print(f"\n{'Condition':<22} {'V1':>5} {'V2':>5} {'Pref':>7}  "
-          f"{'φ3 (rad)':>9}  {'delay (µs)':>10}  {'duty%':>6}  {'t (µs)':>8}")
-    print("-" * 84)
+          f"{'φ1 (rad)':>9}  {'φ3 (rad)':>9}  {'delay (µs)':>10}  {'duty%':>6}  {'t (µs)':>8}")
+    print("-" * 92)
 
     for V1, V2, Pref, label in scenarios:
         ctrl.reset()
@@ -233,10 +247,10 @@ def run_demo():
         duty_pct = ctrl.phi1_to_duty_pct(phi1)
 
         print(f"{label:<22} {V1:>5.0f} {V2:>5.0f} {Pref:>7.0f}  "
-              f"{phi3:>9.4f}  {delay_us:>10.3f}  {duty_pct:>5.1f}%  {t_us:>8.1f}")
+              f"{phi1:>9.4f}  {phi3:>9.4f}  {delay_us:>10.3f}  {duty_pct:>5.1f}%  {t_us:>8.1f}")
 
-    print(f"\nφ1 = φ2 = {PHI12:.4f} rad (fixed) across all conditions")
-    print(f"Gate drive: apply φ3 as phase delay between primary and secondary bridges")
+    print(f"\nAll three angles φ1, φ2, φ3 independently predicted each cycle.")
+    print(f"Gate drive: φ3 → phase delay  |  φ1 → primary duty  |  φ2 → secondary duty")
 
 
 # ─────────────────────────────────────────────────────────────────────────────

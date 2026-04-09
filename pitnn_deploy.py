@@ -50,7 +50,7 @@ import torch
 from pitnn_dab import (
     # Constants
     V1_NOM, V2_NOM, FSW, LK, N_TURNS, PI,
-    PHI_MIN, PHI12_FIXED, PHI3_MAX, K_POWER, B_POWER,
+    PHI_MIN, PHI12_MIN, PHI12_MAX, PHI12_FIXED, PHI3_MAX, K_POWER, B_POWER,
     # Classes
     PITNN, DABPhysics, PITNNController,
 )
@@ -116,8 +116,8 @@ class DeployedController:
 
         n_p = sum(p.numel() for p in self._model.parameters())
         print(f"[DeployedController] Ready — {n_p:,} parameters on {device}")
-        print(f"[DeployedController] φ1=φ2 fixed={PHI12_FIXED:.4f} rad, "
-              f"φ3 ∈ [{PHI_MIN:.3f}, {PHI3_MAX:.3f}] rad")
+        print(f"[DeployedController] φ1,φ2 ∈ [{PHI12_MIN:.4f}, {PHI12_MAX:.4f}] rad  (predicted)")
+        print(f"[DeployedController] φ3    ∈ [{PHI_MIN:.4f},   {PHI3_MAX:.4f}]  rad  (predicted)")
 
     def reset(self):
         """Clear history buffer. Call when starting a new operating scenario."""
@@ -140,8 +140,12 @@ class DeployedController:
         Returns
         ───────
         phi1, phi2, phi3  (floats, radians)
-            Apply phi3 to gate drive: delay = phi3 / (2π × fsw)
-            phi1=phi2=PHI12_FIXED are constant — apply as fixed duty cycle
+            phi1 ∈ [PHI12_MIN, PHI12_MAX] — primary bridge inner duty   (predicted)
+            phi2 ∈ [PHI12_MIN, PHI12_MAX] — secondary bridge inner duty (predicted)
+            phi3 ∈ [PHI_MIN,   PHI3_MAX]  — external phase shift        (predicted)
+            Apply phi3 as gate drive delay = phi3 / (2π × fsw)
+            Apply phi1 as primary duty    = phi1 / π
+            Apply phi2 as secondary duty  = phi2 / π
 
         If verify_physics=True, returns (phi1, phi2, phi3, info_dict)
         """
@@ -228,7 +232,9 @@ class DeployedController:
 
         print(f"\nModel I/O:")
         print(f"  Input : (1, 20, 8) float32  [V1,V2,iL,φ1,φ2,φ3,Pref,V1V2/Vnom²]")
-        print(f"  Output: (1, 3)     float32  [φ1, φ2, φ3]")
+        print(f"  Output: (1, 3)     float32  [φ1, φ2, φ3]  — all independently predicted")
+        print(f"  φ1,φ2 ∈ [{PHI12_MIN:.4f}, {PHI12_MAX:.4f}] rad")
+        print(f"  φ3    ∈ [{PHI_MIN:.4f},   {PHI3_MAX:.4f}]  rad")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -305,13 +311,18 @@ class SafetyMonitor:
             return False, f"Overcurrent: {iL:.1f}A > {self.iL_max}A"
         return True, "OK"
 
-    def check_output(self, phi3):
-        """Returns (safe: bool, phi3_clamped: float)."""
-        if phi3 < self.phi3_min or phi3 > self.phi3_max:
+    def check_output(self, phi1, phi2, phi3):
+        """
+        Clamp all three predicted angles to valid hardware ranges.
+        Returns (all_safe: bool, phi1_c, phi2_c, phi3_c).
+        """
+        phi1_c = float(np.clip(phi1, PHI12_MIN, PHI12_MAX))
+        phi2_c = float(np.clip(phi2, PHI12_MIN, PHI12_MAX))
+        phi3_c = float(np.clip(phi3, self.phi3_min, self.phi3_max))
+        out_of_range = (phi1 != phi1_c or phi2 != phi2_c or phi3 != phi3_c)
+        if out_of_range:
             self.fault_count += 1
-            phi3_clamped = float(np.clip(phi3, self.phi3_min, self.phi3_max))
-            return False, phi3_clamped
-        return True, phi3
+        return not out_of_range, phi1_c, phi2_c, phi3_c
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -327,9 +338,9 @@ def run_demo(ctrl: DeployedController, n_steps=20):
     print("  Demo Loop — Simulated Sensor Readings")
     print("="*68)
     print(f"\n  {'Step':>4}  {'V1':>5} {'V2':>5} {'Pref':>7}  "
-          f"{'φ3':>7}  {'delay µs':>9}  {'duty%':>7}  "
+          f"{'φ1':>7} {'φ2':>7} {'φ3':>7}  {'delay µs':>9}  "
           f"{'P_calc':>8}  {'ZVS':>5}  {'|ΔP|%':>7}")
-    print(f"  {'─'*78}")
+    print(f"  {'─'*90}")
 
     # Simulated operating scenario: ramp from 10kW to 50kW then back
     scenarios = [
@@ -361,16 +372,15 @@ def run_demo(ctrl: DeployedController, n_steps=20):
         )
 
         delay_us = ctrl.phi3_to_delay_us(phi3)
-        duty_pct = ctrl.phi1_to_duty_pct(phi1)
 
         print(f"  {step+1:>4}  {V1:>5.0f} {V2:>5.0f} {Pref:>7.0f}  "
-              f"{phi3:>7.4f}  {delay_us:>9.3f}  {duty_pct:>6.1f}%  "
+              f"{phi1:>7.4f} {phi2:>7.4f} {phi3:>7.4f}  {delay_us:>9.3f}  "
               f"{info['P_calc']:>8.1f}  {'YES' if info['zvs_ok'] else 'NO ':>5}  "
               f"{info['P_err_pct']:>6.1f}%")
 
         time.sleep(0.05)   # remove in real deployment
 
-    print(f"\n  Done. φ1=φ2={PHI12_FIXED:.4f} rad fixed across all steps.")
+    print(f"\n  All three angles φ1, φ2, φ3 independently predicted each step.")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -428,24 +438,25 @@ def run_hardware_loop(ctrl: DeployedController, Vref=800.0,
         # ── PITNN inner loop — one call per switching cycle ───────────────
         phi1, phi2, phi3 = ctrl.step(V1_meas, V2_meas, iL_meas, Pref)
 
-        # ── Safety clamp on model output ──────────────────────────────────
-        out_safe, phi3 = safety.check_output(phi3)
+        # ── Safety clamp on all three model outputs ───────────────────────
+        _, phi1, phi2, phi3 = safety.check_output(phi1, phi2, phi3)
 
         # ── Apply to gate drive ───────────────────────────────────────────
-        delay_s = phi3 / (2.0 * PI * FSW)      # seconds
-        duty    = phi1 / PI                     # fraction
+        delay_s  = phi3 / (2.0 * PI * FSW)   # phase delay in seconds
+        duty_pri = phi1 / PI                  # primary bridge duty fraction
+        duty_sec = phi2 / PI                  # secondary bridge duty fraction
 
         # REPLACE THESE with your actual PWM hardware writes:
-        #   pwm_primary.set_duty(duty)
+        #   pwm_primary.set_duty(duty_pri)
+        #   pwm_secondary.set_duty(duty_sec)
         #   pwm_secondary.set_phase_delay(delay_s)
-        #   pwm.update()                        # atomic register commit
+        #   pwm.update()                          # atomic register commit
 
         # ── Log every 1000 cycles ─────────────────────────────────────────
         if cycle % 1000 == 0:
             print(f"  t={time.perf_counter()-t_start:6.3f}s  "
-                  f"V1={V1_meas:.1f}V  V2={V2_meas:.1f}V  "
-                  f"Pref={Pref:.0f}W  φ3={phi3:.4f}rad  "
-                  f"delay={delay_s*1e6:.2f}µs")
+                  f"V1={V1_meas:.1f}V  V2={V2_meas:.1f}V  Pref={Pref:.0f}W  "
+                  f"φ1={phi1:.4f} φ3={phi3:.4f}rad  delay={delay_s*1e6:.2f}µs")
 
         # ── Wait for next switching cycle ─────────────────────────────────
         elapsed   = time.perf_counter() - cycle_start
@@ -525,7 +536,7 @@ def run_closed_loop(ctrl: DeployedController, Vref=800.0,
 
         # PITNN inference
         phi1, phi2, phi3 = ctrl.step(V1_meas, V2_meas, iL_meas, Pref)
-        _, phi3 = safety.check_output(phi3)
+        _, phi1, phi2, phi3 = safety.check_output(phi1, phi2, phi3)
 
         # Plant update: compute actual power and update V2
         dab.V1, dab.V2 = V1_meas, V2_plant

@@ -35,20 +35,24 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // CONSTANTS  (must match values used during training)
 // ─────────────────────────────────────────────────────────────────────────────
-static constexpr float V1_NOM   = 800.0f;
-static constexpr float V2_NOM   = 800.0f;
-static constexpr float FSW      = 100000.0f;
-static constexpr float PI_F     = 3.14159265358979f;
-static constexpr float PHI12    = PI_F * 0.95f;   // 2.9845 rad — fixed inner duty
-static constexpr float PHI_MIN  = 0.05f;
-static constexpr float PHI3_MAX = 1.50f;
-static constexpr int   SEQ_LEN  = 20;
-static constexpr int   N_FEAT   = 8;
+static constexpr float V1_NOM    = 800.0f;
+static constexpr float V2_NOM    = 800.0f;
+static constexpr float FSW       = 100000.0f;
+static constexpr float PI_F      = 3.14159265358979f;
+static constexpr float PHI12_MIN = PI_F * 0.65f;   // 2.0420 rad — lower bound phi1/phi2
+static constexpr float PHI12_MAX = PI_F * 0.99f;   // 3.1102 rad — upper bound phi1/phi2
+static constexpr float PHI12_NOM = PI_F * 0.95f;   // nominal seed for buffer priming
+static constexpr float PHI_MIN   = 0.02f;           // lower bound for phi3
+static constexpr float PHI3_MAX  = 1.50f;
+static constexpr int   SEQ_LEN   = 20;
+static constexpr int   N_FEAT    = 8;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // NORMALISATION CONSTANTS
-// Extracted from pitnn_mu.npy and pitnn_sigma.npy via:
-//     python3 -c "import numpy as np; mu=np.load('pitnn_mu.npy'); print(list(mu))"
+// NOTE: phi1/phi2 now vary across [PHI12_MIN, PHI12_MAX] — the mu/sigma values
+// below MUST be regenerated after retraining. Run:
+//     python pitnn_inspect_exports.py
+// and paste the printed C++ arrays here.
 // Feature order: [V1, V2, iL, phi1, phi2, phi3, Pref, V1V2/Vnom2]
 // ─────────────────────────────────────────────────────────────────────────────
 static const float MU[N_FEAT] = {
@@ -140,6 +144,8 @@ public:
         for (int t = 0; t < SEQ_LEN; t++)
             for (int f = 0; f < N_FEAT; f++)
                 _buffer[t][f] = 0.0f;
+        _phi1_prev = PHI12_NOM;   // seed with nominal inner duty
+        _phi2_prev = PHI12_NOM;
         _phi3_prev = 0.22f;
     }
 
@@ -153,16 +159,17 @@ public:
      *   Pref  : power reference (W)          — from outer PI loop
      *
      * Returns:
-     *   {phi1, phi2, phi3} in radians
-     *   phi1 = phi2 = PHI12 (fixed)
-     *   phi3 ∈ [PHI_MIN, PHI3_MAX]  — apply as gate drive phase delay
+     *   {phi1, phi2, phi3} in radians — all three independently predicted
+     *   phi1 ∈ [PHI12_MIN, PHI12_MAX] — primary bridge inner duty
+     *   phi2 ∈ [PHI12_MIN, PHI12_MAX] — secondary bridge inner duty
+     *   phi3 ∈ [PHI_MIN,   PHI3_MAX]  — external phase shift → gate drive delay
      */
     std::array<float, 3> step(float V1, float V2, float iL, float Pref) {
 
-        // Build 8-feature state vector
+        // Build 8-feature state vector using previous predicted angles
         float v_ratio = (V1 * V2) / (V1_NOM * V2_NOM);
         float feat[N_FEAT] = {
-            V1, V2, iL, PHI12, PHI12, _phi3_prev, Pref, v_ratio
+            V1, V2, iL, _phi1_prev, _phi2_prev, _phi3_prev, Pref, v_ratio
         };
 
         // Normalise: (x - mu) / sigma
@@ -194,6 +201,8 @@ public:
         float phi2 = output[1].item<float>();
         float phi3 = output[2].item<float>();
 
+        _phi1_prev = phi1;
+        _phi2_prev = phi2;
         _phi3_prev = phi3;
         return {phi1, phi2, phi3};
     }
@@ -214,6 +223,8 @@ private:
     float _mu[N_FEAT];
     float _sigma[N_FEAT];
     float _buffer[SEQ_LEN][N_FEAT];
+    float _phi1_prev;
+    float _phi2_prev;
     float _phi3_prev;
 };
 
@@ -283,7 +294,9 @@ int main(int argc, char* argv[]) {
     }
 
     std::cout << std::endl;
-    std::cout << "phi1 = phi2 = " << PHI12 << " rad (fixed) across all conditions"
+    std::cout << "All three angles phi1, phi2, phi3 independently predicted each cycle."
+              << std::endl;
+    std::cout << "Gate drive: phi3 -> phase delay  |  phi1 -> primary duty  |  phi2 -> secondary duty"
               << std::endl;
 
     // ── Integration example: minimal real-time loop ───────────────────────
