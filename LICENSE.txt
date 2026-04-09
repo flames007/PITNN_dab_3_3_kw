@@ -164,8 +164,8 @@ SECTION 6 — ATTRIBUTION AND INTELLECTUAL PROPERTY
 The Author retains all intellectual property rights in the Software,
 including the following novel contributions:
 
-  1. The fixed-phi12 TPS modulation strategy creating a monotone
-     Pref-to-phi3 mapping (r=0.994) enabling reliable Transformer
+  1. The TPS modulation strategy creating a monotone
+      mapping (r=0.994) enabling reliable Transformer
      learning of DAB modulation angles.
 
   2. The calibrated power model P=K*(phi12/pi)*phi3*(1-phi3/B) fitted
