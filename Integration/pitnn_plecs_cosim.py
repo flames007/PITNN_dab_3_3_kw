@@ -94,11 +94,11 @@ def plecs_step(V1, V2, iL, Pref):
 
     Returns (to PLECS output signals)
     ──────────────────────────────────
-    phi1      : inner duty phi1 = 2.9845 rad (fixed)
-    phi2      : inner duty phi2 = 2.9845 rad (fixed)
+    phi1      : primary inner duty  (rad) — predicted by PITNN each cycle
+    phi2      : secondary inner duty (rad) — predicted by PITNN each cycle
     phi3      : external phase shift (rad) — connect to Phase Shift Modulator
     delay_us  : phi3 converted to gate drive time delay (µs)
-    duty_pct  : phi1 converted to inner duty cycle (%)
+    duty_pct  : phi1 converted to primary bridge duty cycle (%)
     """
     global _ctrl
 
@@ -148,6 +148,7 @@ def mdlOutputs(t, *u):
     Returns list of 5 output values.
     """
     if len(u) < 4:
+        # Safe defaults while model loads: nominal inner duty, low phi3
         return [2.9845, 2.9845, 0.22, 0.35, 95.0]
 
     V1, V2, iL, Pref = u[0], u[1], u[2], u[3]

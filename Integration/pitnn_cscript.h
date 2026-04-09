@@ -42,20 +42,23 @@
 #include <string.h>
 
 /* ── Controller constants ─────────────────────────────────────── */
-#define PITNN_SEQ_LEN   20
-#define PITNN_N_FEAT     8
-#define PITNN_PI_F       3.14159265358979f
-#define PITNN_PHI12      2.98451302f   /* PI * 0.95 — fixed inner duty */
-#define PITNN_PHI_MIN    0.05f
-#define PITNN_PHI3_MAX   1.50f
-#define PITNN_V1_NOM   800.0f
-#define PITNN_V2_NOM   800.0f
+#define PITNN_SEQ_LEN    20
+#define PITNN_N_FEAT      8
+#define PITNN_PI_F        3.14159265358979f
+#define PITNN_PHI12_MIN   2.04203522f   /* PI * 0.65 — lower bound phi1/phi2  */
+#define PITNN_PHI12_MAX   3.11017082f   /* PI * 0.99 — upper bound phi1/phi2  */
+#define PITNN_PHI12_NOM   2.98451302f   /* PI * 0.95 — nominal seed           */
+#define PITNN_PHI_MIN     0.02f         /* lower bound phi3                   */
+#define PITNN_PHI3_MAX    1.50f
+#define PITNN_V1_NOM    800.0f
+#define PITNN_V2_NOM    800.0f
 #define PITNN_FSW    100000.0f
 
 /*
  * Normalisation constants extracted from pitnn_mu.npy / pitnn_sigma.npy
+ * NOTE: phi1/phi2 now vary — these values MUST be refreshed after retraining.
+ * Run: python pitnn_inspect_exports.py  and paste the C arrays printed there.
  * Feature order: [V1, V2, iL, phi1, phi2, phi3, Pref, V1V2/Vnom2]
- * Run pitnn_inspect_exports.py to verify these match your checkpoint.
  */
 static const float PITNN_MU[PITNN_N_FEAT] = {
     800.02514648f,    /* V1   (V)        */
@@ -81,7 +84,9 @@ static const float PITNN_SIGMA[PITNN_N_FEAT] = {
 
 /* Rolling history buffer — persists between simulation time steps */
 static float pitnn_buffer[PITNN_SEQ_LEN][PITNN_N_FEAT];
-static float pitnn_phi3_prev = 0.22f;
+static float pitnn_phi1_prev = PITNN_PHI12_NOM;  /* previous phi1 output */
+static float pitnn_phi2_prev = PITNN_PHI12_NOM;  /* previous phi2 output */
+static float pitnn_phi3_prev = 0.22f;             /* previous phi3 output */
 static int   pitnn_init_done  = 0;
 
 /* Safety clamp helper */
@@ -99,11 +104,13 @@ static float pitnn_clamp(float v, float lo, float hi) {
     int step, f;
     float feat[PITNN_N_FEAT];
     float feat_norm[PITNN_N_FEAT];
-    float phi3, v_ratio;
+    float phi1, phi2, phi3, v_ratio;
 
     /* Initialise buffer on first call */
     if (!pitnn_init_done) {
         memset(pitnn_buffer, 0, sizeof(pitnn_buffer));
+        pitnn_phi1_prev = PITNN_PHI12_NOM;
+        pitnn_phi2_prev = PITNN_PHI12_NOM;
         pitnn_phi3_prev = 0.22f;
         pitnn_init_done = 1;
     }
@@ -119,9 +126,9 @@ static float pitnn_clamp(float v, float lo, float hi) {
     feat[0]  = V1;
     feat[1]  = V2;
     feat[2]  = iL;
-    feat[3]  = PITNN_PHI12;
-    feat[4]  = PITNN_PHI12;
-    feat[5]  = pitnn_phi3_prev;
+    feat[3]  = pitnn_phi1_prev;   /* previous predicted phi1 */
+    feat[4]  = pitnn_phi2_prev;   /* previous predicted phi2 */
+    feat[5]  = pitnn_phi3_prev;   /* previous predicted phi3 */
     feat[6]  = Pref;
     feat[7]  = v_ratio;
 
@@ -140,7 +147,8 @@ static float pitnn_clamp(float v, float lo, float hi) {
      * ── INFERENCE ─────────────────────────────────────────────
      *
      * The normalised buffer (pitnn_buffer[20][8]) is now ready.
-     * Replace the phi3 assignment below with your inference call:
+     * The model predicts [phi1, phi2, phi3] independently.
+     * Replace the placeholder assignments below with your inference call.
      *
      * OPTION A — Embedded weights (advanced):
      *   Call your matrix-multiply forward pass here.
@@ -155,28 +163,33 @@ static float pitnn_clamp(float v, float lo, float hi) {
      *
      * OPTION B — Method 2 (Python co-simulation):
      *   Remove this C-Script inference block entirely.
-     *   Use plecs_pitnn_cosim.py as a Simulation Script instead.
-     *   The Python script handles inference and returns phi3 via
-     *   a PLECS signal connection.
+     *   Use pitnn_plecs_cosim.py as a Simulation Script instead.
      *
      * OPTION C — Method 4 (socket server):
      *   Call pitnn_send_recv() here (see pitnn_socket_client.h)
-     *   to send the buffer to pitnn_socket_server.py and receive phi3.
+     *   to send the buffer to pitnn_socket_server.py and receive
+     *   [phi1, phi2, phi3].
      *
      * Placeholder — replace with real inference:
      */
+    phi1 = pitnn_phi1_prev;
+    phi2 = pitnn_phi2_prev;
     phi3 = pitnn_phi3_prev;
 
-    /* ── Safety clamp ─────────────────────────────────────────── */
-    phi3 = pitnn_clamp(phi3, PITNN_PHI_MIN, PITNN_PHI3_MAX);
+    /* ── Safety clamp all three outputs ──────────────────────── */
+    phi1 = pitnn_clamp(phi1, PITNN_PHI12_MIN, PITNN_PHI12_MAX);
+    phi2 = pitnn_clamp(phi2, PITNN_PHI12_MIN, PITNN_PHI12_MAX);
+    phi3 = pitnn_clamp(phi3, PITNN_PHI_MIN,   PITNN_PHI3_MAX);
+    pitnn_phi1_prev = phi1;
+    pitnn_phi2_prev = phi2;
     pitnn_phi3_prev = phi3;
 
     /* ── Write outputs ────────────────────────────────────────── */
-    y[0] = (double)PITNN_PHI12;                            /* phi1 (rad)     */
-    y[1] = (double)PITNN_PHI12;                            /* phi2 (rad)     */
-    y[2] = (double)phi3;                                   /* phi3 (rad)     */
-    y[3] = (double)(phi3 / (2.0f * PITNN_PI_F * PITNN_FSW) * 1e6f);  /* delay (µs) */
-    y[4] = (double)(PITNN_PHI12 / PITNN_PI_F * 100.0f);   /* duty %         */
+    y[0] = (double)phi1;                                              /* phi1 (rad)  */
+    y[1] = (double)phi2;                                              /* phi2 (rad)  */
+    y[2] = (double)phi3;                                              /* phi3 (rad)  */
+    y[3] = (double)(phi3 / (2.0f * PITNN_PI_F * PITNN_FSW) * 1e6f); /* delay (µs)  */
+    y[4] = (double)(phi1 / PITNN_PI_F * 100.0f);                     /* duty %      */
 }
 
 
@@ -187,6 +200,8 @@ static float pitnn_clamp(float v, float lo, float hi) {
 
 {
     memset(pitnn_buffer, 0, sizeof(pitnn_buffer));
+    pitnn_phi1_prev = PITNN_PHI12_NOM;
+    pitnn_phi2_prev = PITNN_PHI12_NOM;
     pitnn_phi3_prev = 0.22f;
     pitnn_init_done  = 0;
 }

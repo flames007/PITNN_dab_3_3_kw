@@ -46,8 +46,10 @@ classdef PITNNController < matlab.System & matlab.system.mixin.Propagates
 
     % ── Fixed constants ───────────────────────────────────────────
     properties (Constant)
-        PHI12    = pi * 0.95    % 2.9845 rad — fixed inner duty
-        PHI_MIN  = 0.05
+        PHI12_MIN = pi * 0.65   % 2.0420 rad — lower bound phi1/phi2
+        PHI12_MAX = pi * 0.99   % 3.1102 rad — upper bound phi1/phi2
+        PHI12_NOM = pi * 0.95   % nominal seed for buffer priming
+        PHI_MIN  = 0.02
         PHI3_MAX = 1.50
         V1_NOM   = 800.0
         V2_NOM   = 800.0
@@ -56,6 +58,9 @@ classdef PITNNController < matlab.System & matlab.system.mixin.Propagates
         N_FEAT   = 8
 
         % Normalisation constants from pitnn_mu.npy / pitnn_sigma.npy
+        % NOTE: phi1/phi2 now vary — refresh these after retraining by running:
+        %   python pitnn_inspect_exports.py
+        % and pasting the MATLAB arrays it prints.
         MU = single([800.02515, 800.20203, 25.38188, 2.99314, ...
                      2.99314,   0.47853,   37593.668, 1.00037])
         SIGMA = single([46.25231, 46.19022, 15.18009, 0.00862, ...
@@ -65,6 +70,8 @@ classdef PITNNController < matlab.System & matlab.system.mixin.Propagates
     % ── Internal state ────────────────────────────────────────────
     properties (Access = private)
         Buffer       % (20 x 8) single rolling history
+        Phi1Prev     % previous phi1 output
+        Phi2Prev     % previous phi2 output
         Phi3Prev     % previous phi3 output
         PyCtrl       % Python PITNNInference object
         UsePython    % true if Python interface available
@@ -105,6 +112,8 @@ classdef PITNNController < matlab.System & matlab.system.mixin.Propagates
         % ── Initialisation ────────────────────────────────────────
         function setupImpl(obj)
             obj.Buffer   = zeros(obj.SEQ_LEN, obj.N_FEAT, 'single');
+            obj.Phi1Prev = obj.PHI12_NOM;   % seed with nominal inner duty
+            obj.Phi2Prev = obj.PHI12_NOM;
             obj.Phi3Prev = 0.22;
 
             % Try to connect to Python PITNNInference
@@ -128,9 +137,9 @@ classdef PITNNController < matlab.System & matlab.system.mixin.Propagates
         % ── Per-step computation ──────────────────────────────────
         function [phi1, phi2, phi3] = stepImpl(obj, V1, V2, iL, Pref)
 
-            % Build 8-feature vector
+            % Build 8-feature vector using previous predicted angles
             v_ratio  = single(V1 * V2) / single(obj.V1_NOM * obj.V2_NOM);
-            feat     = single([V1, V2, iL, obj.PHI12, obj.PHI12, ...
+            feat     = single([V1, V2, iL, obj.Phi1Prev, obj.Phi2Prev, ...
                                 obj.Phi3Prev, Pref, v_ratio]);
 
             % Normalise
@@ -143,11 +152,16 @@ classdef PITNNController < matlab.System & matlab.system.mixin.Propagates
             % ── Inference ─────────────────────────────────────────
             if obj.UsePython
                 % Call Python PITNNInference via MATLAB py.* interface
+                % PITNNInference.step() now returns (phi1, phi2, phi3) — all predicted
                 try
-                    result = obj.PyCtrl.step(double(V1), double(V2), ...
-                                              double(iL),  double(Pref));
+                    result   = obj.PyCtrl.step(double(V1), double(V2), ...
+                                               double(iL),  double(Pref));
+                    phi1_out = double(result{1});
+                    phi2_out = double(result{2});
                     phi3_out = double(result{3});
                 catch
+                    phi1_out = double(obj.Phi1Prev);
+                    phi2_out = double(obj.Phi2Prev);
                     phi3_out = double(obj.Phi3Prev);
                 end
             else
@@ -157,25 +171,37 @@ classdef PITNNController < matlab.System & matlab.system.mixin.Propagates
                 % if isempty(net)
                 %     net = importONNXNetwork(fullfile(obj.PITNN_DIR,'pitnn_model.onnx'));
                 % end
-                % x = reshape(obj.Buffer, [1, obj.SEQ_LEN, obj.N_FEAT]);
-                % out = predict(net, x);
+                % x   = reshape(obj.Buffer, [1, obj.SEQ_LEN, obj.N_FEAT]);
+                % out = predict(net, x);   % out is (1,3): [phi1, phi2, phi3]
+                % phi1_out = double(out(1));
+                % phi2_out = double(out(2));
                 % phi3_out = double(out(3));
+                phi1_out = double(obj.Phi1Prev);
+                phi2_out = double(obj.Phi2Prev);
                 phi3_out = double(obj.Phi3Prev);
             end
 
-            % Clamp and store
-            phi3_out     = max(obj.PHI_MIN, min(obj.PHI3_MAX, phi3_out));
+            % Clamp all three to valid hardware ranges
+            phi1_out = max(double(obj.PHI12_MIN), min(double(obj.PHI12_MAX), phi1_out));
+            phi2_out = max(double(obj.PHI12_MIN), min(double(obj.PHI12_MAX), phi2_out));
+            phi3_out = max(double(obj.PHI_MIN),   min(double(obj.PHI3_MAX),  phi3_out));
+
+            % Store for next step's feature vector
+            obj.Phi1Prev = phi1_out;
+            obj.Phi2Prev = phi2_out;
             obj.Phi3Prev = phi3_out;
 
-            % Return outputs
-            phi1 = double(obj.PHI12);
-            phi2 = double(obj.PHI12);
+            % Return all three predicted angles
+            phi1 = phi1_out;
+            phi2 = phi2_out;
             phi3 = phi3_out;
         end
 
         % ── Reset ─────────────────────────────────────────────────
         function resetImpl(obj)
             obj.Buffer   = zeros(obj.SEQ_LEN, obj.N_FEAT, 'single');
+            obj.Phi1Prev = obj.PHI12_NOM;
+            obj.Phi2Prev = obj.PHI12_NOM;
             obj.Phi3Prev = 0.22;
             if obj.UsePython && ~isempty(obj.PyCtrl)
                 try; obj.PyCtrl.reset(); catch; end

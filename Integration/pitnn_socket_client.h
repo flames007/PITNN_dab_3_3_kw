@@ -52,13 +52,17 @@
 #define PITNN_HOST  "127.0.0.1"   /* IP of machine running pitnn_socket_server.py */
 #define PITNN_PORT  9999          /* Must match PORT in pitnn_socket_server.py     */
 
-#define PITNN_PHI12     2.98451302f
-#define PITNN_PHI_MIN   0.05f
-#define PITNN_PHI3_MAX  1.50f
+#define PITNN_PHI12_MIN  2.04203522f   /* PI * 0.65 — lower bound phi1/phi2 */
+#define PITNN_PHI12_MAX  3.11017082f   /* PI * 0.99 — upper bound phi1/phi2 */
+#define PITNN_PHI12_NOM  2.98451302f   /* PI * 0.95 — nominal seed          */
+#define PITNN_PHI_MIN    0.02f         /* lower bound phi3                  */
+#define PITNN_PHI3_MAX   1.50f
 
 /* Persistent socket handle */
-static sock_t  pitnn_sock    = SOCK_INVALID;
+static sock_t  pitnn_sock      = SOCK_INVALID;
 static int     pitnn_connected = 0;
+static float   pitnn_phi1_prev = PITNN_PHI12_NOM;
+static float   pitnn_phi2_prev = PITNN_PHI12_NOM;
 static float   pitnn_phi3_prev = 0.22f;
 
 /* Helper: send exactly n bytes */
@@ -117,15 +121,17 @@ static int pitnn_connect(void) {
     float V2   = (float)u[1];
     float iL   = (float)u[2];
     float Pref = (float)u[3];
+    float phi1 = pitnn_phi1_prev;
+    float phi2 = pitnn_phi2_prev;
     float phi3 = pitnn_phi3_prev;
 
     /* Connect on first call */
     if (!pitnn_connected) {
         if (pitnn_connect() != 0) {
             /* Connection failed — output safe defaults */
-            y[0] = PITNN_PHI12;
-            y[1] = PITNN_PHI12;
-            y[2] = PITNN_PHI3_MAX * 0.15f;   /* safe low-power phi3 */
+            y[0] = PITNN_PHI12_NOM;
+            y[1] = PITNN_PHI12_NOM;
+            y[2] = PITNN_PHI_MIN;
             return;
         }
     }
@@ -139,7 +145,7 @@ static int pitnn_connect(void) {
     }
 
     /* ── Receive 12 bytes: [phi1, phi2, phi3] ──────────────────── */
-    float recv_buf[3] = {PITNN_PHI12, PITNN_PHI12, phi3};
+    float recv_buf[3] = {pitnn_phi1_prev, pitnn_phi2_prev, pitnn_phi3_prev};
     if (pitnn_connected) {
         if (pitnn_recv_all(pitnn_sock, (char*)recv_buf, 12) != 0) {
             pitnn_connected = 0;
@@ -148,15 +154,23 @@ static int pitnn_connect(void) {
         }
     }
 
-    /* ── Clamp and store ───────────────────────────────────────── */
+    /* ── Clamp all three and store ─────────────────────────────── */
+    phi1 = recv_buf[0];
+    phi2 = recv_buf[1];
     phi3 = recv_buf[2];
-    if (phi3 < PITNN_PHI_MIN)  phi3 = PITNN_PHI_MIN;
-    if (phi3 > PITNN_PHI3_MAX) phi3 = PITNN_PHI3_MAX;
+    if (phi1 < PITNN_PHI12_MIN) phi1 = PITNN_PHI12_MIN;
+    if (phi1 > PITNN_PHI12_MAX) phi1 = PITNN_PHI12_MAX;
+    if (phi2 < PITNN_PHI12_MIN) phi2 = PITNN_PHI12_MIN;
+    if (phi2 > PITNN_PHI12_MAX) phi2 = PITNN_PHI12_MAX;
+    if (phi3 < PITNN_PHI_MIN)   phi3 = PITNN_PHI_MIN;
+    if (phi3 > PITNN_PHI3_MAX)  phi3 = PITNN_PHI3_MAX;
+    pitnn_phi1_prev = phi1;
+    pitnn_phi2_prev = phi2;
     pitnn_phi3_prev = phi3;
 
-    y[0] = (double)recv_buf[0];   /* phi1 */
-    y[1] = (double)recv_buf[1];   /* phi2 */
-    y[2] = (double)phi3;          /* phi3 */
+    y[0] = (double)phi1;   /* phi1 */
+    y[1] = (double)phi2;   /* phi2 */
+    y[2] = (double)phi3;   /* phi3 */
 }
 
 
@@ -170,6 +184,8 @@ static int pitnn_connect(void) {
         pitnn_sock = SOCK_INVALID;
     }
     pitnn_connected = 0;
+    pitnn_phi1_prev = PITNN_PHI12_NOM;
+    pitnn_phi2_prev = PITNN_PHI12_NOM;
     pitnn_phi3_prev = 0.22f;
 #ifdef _WIN32
     WSACleanup();
