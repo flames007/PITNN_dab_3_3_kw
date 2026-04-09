@@ -38,7 +38,7 @@ python pitnn_deploy.py --checkpoint my_other_checkpoint.pt --mode demo
 # 4. Get help
 python pitnn_deploy.py --help
 
-# Export for Usage
+# Export for Usage on a controller
 python pitnn_deploy.py --mode export
 
 python pitnn_inspect_exports.py
