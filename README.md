@@ -27,7 +27,7 @@ python pitnn_deploy.py
 # 2. Explicitly choose a mode
 python pitnn_deploy.py --mode demo
 
-python pitnn_deploy.py --mode export # (For onnx you need to pip install onnx)
+python pitnn_deploy.py --mode export # (For onnx you need to pip install onnx and pip install onnxruntime-gpu)
 
 python pitnn_deploy.py --mode closed_loop
 
