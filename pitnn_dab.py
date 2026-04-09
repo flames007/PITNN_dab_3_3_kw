@@ -79,7 +79,7 @@ PHI_MIN     = 0.02           # lower bound for phi3 — allows model to reach
 PHI12_MIN   = PI * 0.65      # lower bound for phi1/phi2 (2.042 rad ≈ 65% duty)
                              # below this ZVS fails at asymmetric V conditions
 PHI12_MAX   = PI * 0.99      # upper bound for phi1/phi2 (3.110 rad)
-PHI12_FIXED = PI * 0.95      # nominal design point — kept for solver seed
+PHI12_NOM = PI * 0.95      # nominal design point — kept for solver seed
 PHI3_MAX    = 1.50
 K_POWER     = 105674.0
 B_POWER     = 3.136
@@ -563,12 +563,12 @@ class DABPhysics:
         # Adaptive phi12 floor: scales with V2/V1 so high-V2 conditions
         # search lower phi12 values where ZVS penalty is smallest
         v_ratio     = (self.n * self.V2) / max(self.V1, 1.0)
-        phi12_floor = float(np.clip(PI * 0.50 * v_ratio, PHI12_MIN, PHI12_FIXED))
+        phi12_floor = float(np.clip(PI * 0.50 * v_ratio, PHI12_MIN, PHI12_NOM))
 
         # 7-point grid (6 spaced + nominal) — faster than 11-point
         grid = np.unique(np.clip(
             np.concatenate([np.linspace(phi12_floor, PHI12_MAX, 6),
-                            np.array([PHI12_FIXED])]),
+                            np.array([PHI12_NOM])]),
             PHI12_MIN, PHI12_MAX))
 
         # Higher resolution brentq at low power avoids quantisation flat spot
@@ -620,9 +620,9 @@ class DABPhysics:
                 best_cost = cost
                 best_phi  = np.array([phi12, phi12, phi3], dtype=np.float32)
 
-        # Fallback: PHI12_FIXED + brentq on phi3 only
+        # Fallback: PHI12_NOM + brentq on phi3 only
         if best_phi is None:
-            phi12  = float(PHI12_FIXED)
+            phi12  = float(PHI12_NOM)
             P_hi   = self._compute_power_fast(phi12, phi12, PHI3_PEAK)
             Pref_c = float(min(Pref, P_hi * 0.97))
             def _pfb(p, phi12=phi12):
@@ -773,7 +773,7 @@ def generate_dataset(n_samples=10000,seq_len=20,
             print(f"    {s+1}/{n_samples}  elapsed {el:.0f}s  ETA {eta:.0f}s  (fallbacks:{n_fb})")
         V1=float(rng.uniform(*V1_range)); V2=float(rng.uniform(*V2_range))
         dab.V1,dab.V2=V1,V2
-        P_ach = dab._compute_power_fast(PHI12_FIXED, PHI12_FIXED, PHI3_PEAK)
+        P_ach = dab._compute_power_fast(PHI12_NOM, PHI12_NOM, PHI3_PEAK)
 
         # Alternate between low-power and full-range samples
         if s < n_low:
