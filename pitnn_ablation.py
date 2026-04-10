@@ -6,13 +6,16 @@ for the PITNN DAB Converter TPS Modulation Paper.
 
 Trains and evaluates all model variants on the same dataset split
 and reports a consolidated results table suitable for a paper table.
+Optionally augments training with a real hardware oscilloscope video
+and produces a second set of results (synthetic + video) to quantify
+the benefit of multimodal training.
 
 MODELS
 ───────
 Baselines:
   1. MLP            — flat feature vector, no sequence modelling
   2. LSTM           — recurrent sequence model, no physics loss
-  3. VanillaTransformer — Transformer with no physics loss terms
+  3. GRU            — gated recurrent unit, no physics loss
 
 Ablations (full PITNN with components removed one at a time):
   4. PITNN – LP       — no power physics loss
@@ -20,21 +23,30 @@ Ablations (full PITNN with components removed one at a time):
   6. PITNN – Lsym     — no bridge symmetry penalty
   7. PITNN – warmup   — physics loss on from epoch 1 (no curriculum)
   8. PITNN – PE       — no positional encoding
-  9. PITNN – PreLN    — post-LayerNorm (standard) instead of Pre-LN
+  9. PITNN – Pre-LN   — post-LayerNorm instead of Pre-LN
 
 Full model:
   10. PITNN (full)    — all components enabled
 
 RUN
 ────
+  # Synthetic data only:
   python pitnn_ablation.py
 
-All models are trained on the same 10,000-sample synthetic dataset
-with identical train/val/test splits (seed=42).
-Results are written to:
-  pitnn_ablation_results.csv   — machine-readable table
-  pitnn_ablation_results.png   — bar chart comparison
-  pitnn_ablation_training.png  — training curves for all models
+  # With oscilloscope video (adds synthetic + video results table):
+  python pitnn_ablation.py --video path/to/scope.mp4
+
+  # Quick sanity check (50 epochs, 3000 samples):
+  python pitnn_ablation.py --fast
+
+OUTPUT FILES
+─────────────
+  pitnn_ablation_results.csv        — synthetic-only results table
+  pitnn_ablation_results.png        — MAE bar chart (synthetic)
+  pitnn_ablation_training.png       — training curves, all models
+  pitnn_ablation_perangle.png       — per-angle MAE breakdown
+  pitnn_ablation_video_results.csv  — synthetic+video results (if --video)
+  pitnn_ablation_video_results.png  — MAE comparison with video data
 
 Copyright (c) 2026 Chukwuemeka Nzeadibe
 Mississippi State University — All Rights Reserved
@@ -66,6 +78,8 @@ from pitnn_dab import (
     K_POWER, B_POWER,
     # Dataset + physics
     generate_dataset, DABPhysics,
+    # Video ingestion
+    VideoWaveformExtractor,
     # Full PITNN architecture + loss
     PITNN, PositionalEncoding, PITNNLoss,
 )
@@ -126,9 +140,8 @@ class LSTMModel(nn.Module):
         )
 
     def forward(self, x):
-        # x: (B, seq_len, n_feat)
-        out, _ = self.lstm(x)         # out: (B, seq_len, hidden)
-        raw    = self.head(out[:, -1, :])   # use last time step
+        out, _ = self.lstm(x)               # (B, seq_len, hidden)
+        raw    = self.head(out[:, -1, :])   # last time step
         sig    = torch.sigmoid(raw)
         phi1   = PHI12_MIN + (PHI12_MAX - PHI12_MIN) * sig[:, 0:1]
         phi2   = PHI12_MIN + (PHI12_MAX - PHI12_MIN) * sig[:, 1:2]
@@ -136,46 +149,35 @@ class LSTMModel(nn.Module):
         return torch.cat([phi1, phi2, phi3], dim=1)
 
 
-class VanillaTransformer(nn.Module):
+class GRUModel(nn.Module):
     """
-    Baseline 3 — Vanilla Transformer (no physics loss, standard Post-LN).
-    Same architecture as PITNN but trained with pure MSE loss and using
-    standard post-LayerNorm TransformerEncoderLayer. Isolates the
-    contribution of the physics-informed loss and Pre-LN design.
+    Baseline 3 — GRU (Gated Recurrent Unit).
+    Same structure as the LSTM baseline but uses GRU cells, which have
+    fewer parameters (no separate cell state) and often train faster.
+    Included to compare against LSTM and isolate the effect of the
+    gating mechanism choice on TPS prediction accuracy.
     """
-    def __init__(self, d_in=8, d_model=128, n_heads=8, n_layers=4,
-                 d_ff=256, seq_len=20, dropout=0.1):
+    def __init__(self, n_feat=8, hidden=256, n_layers=2, dropout=0.1):
         super().__init__()
-        self.seq_len = seq_len
-        self.embed   = nn.Linear(d_in, d_model)
-        # Sinusoidal positional encoding (same as PITNN)
-        self.pos_enc = PositionalEncoding(d_model, seq_len + 8, dropout)
-        # Standard Post-LN (norm_first=False, PyTorch default)
-        enc = nn.TransformerEncoderLayer(
-            d_model=d_model, nhead=n_heads, dim_feedforward=d_ff,
-            dropout=dropout, batch_first=True, norm_first=False,
-            activation="relu",
+        self.gru = nn.GRU(
+            input_size  = n_feat,
+            hidden_size = hidden,
+            num_layers  = n_layers,
+            batch_first = True,
+            dropout     = dropout if n_layers > 1 else 0.0,
         )
-        self.transformer = nn.TransformerEncoder(
-            enc, num_layers=n_layers, enable_nested_tensor=False
+        self.head = nn.Sequential(
+            nn.Linear(hidden, 256), nn.ReLU(), nn.Dropout(dropout),
+            nn.Linear(256, 3),
         )
-        self.ln_out    = nn.LayerNorm(d_model)
-        self.head      = nn.Sequential(
-            nn.Linear(d_model, d_ff), nn.ReLU(), nn.Dropout(dropout),
-            nn.Linear(d_ff, 3),
-        )
-        for m in self.modules():
-            if isinstance(m, nn.Linear):
-                nn.init.xavier_uniform_(m.weight)
-                if m.bias is not None: nn.init.zeros_(m.bias)
 
     def forward(self, x):
-        z   = self.ln_out(self.transformer(self.pos_enc(self.embed(x))))
-        raw = self.head(z[:, -1, :])
-        sig = torch.sigmoid(raw)
-        phi1 = PHI12_MIN + (PHI12_MAX - PHI12_MIN) * sig[:, 0:1]
-        phi2 = PHI12_MIN + (PHI12_MAX - PHI12_MIN) * sig[:, 1:2]
-        phi3 = PHI_MIN   + (PHI3_MAX  - PHI_MIN)   * sig[:, 2:3]
+        out, _ = self.gru(x)                # (B, seq_len, hidden)
+        raw    = self.head(out[:, -1, :])   # last time step
+        sig    = torch.sigmoid(raw)
+        phi1   = PHI12_MIN + (PHI12_MAX - PHI12_MIN) * sig[:, 0:1]
+        phi2   = PHI12_MIN + (PHI12_MAX - PHI12_MIN) * sig[:, 1:2]
+        phi3   = PHI_MIN   + (PHI3_MAX  - PHI_MIN)   * sig[:, 2:3]
         return torch.cat([phi1, phi2, phi3], dim=1)
 
 
@@ -265,7 +267,7 @@ class PITNNPostLN(nn.Module):
 # ═════════════════════════════════════════════════════════════════════════════
 # GENERIC TRAINING LOOP
 # Accepts any model — does not require raw features for physics loss.
-# For baselines (MLP, LSTM, VanillaTransformer) physics_loss=False.
+# For baselines (MLP, LSTM, GRU) physics_loss=False.
 # For PITNN variants physics_loss=True and the full PITNNLoss is used.
 # ═════════════════════════════════════════════════════════════════════════════
 
@@ -426,10 +428,10 @@ def train_model(
 # RESULTS TABLE
 # ═════════════════════════════════════════════════════════════════════════════
 
-def print_results_table(results):
+def print_results_table(results, title="Synthetic Only", csv_path="pitnn_ablation_results.csv"):
     """Print and save the consolidated ablation results table."""
     print("\n" + "=" * 100)
-    print("  ABLATION STUDY & BASELINE COMPARISON — Results Table")
+    print(f"  ABLATION STUDY & BASELINE COMPARISON — {title}")
     print("=" * 100)
     hdr = (f"  {'Model':<30} {'Params':>8}  {'MSE (rad²)':>12}  "
            f"{'MAE (°)':>9}  {'φ1 MAE(°)':>10}  "
@@ -456,22 +458,24 @@ def print_results_table(results):
 
     print("=" * 100)
 
-    # Save CSV
-    with open("pitnn_ablation_results.csv", "w", newline="") as f:
+    with open(csv_path, "w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(["Model", "Params", "MSE_rad2",
                          "MAE_deg", "MAE_phi1_deg", "MAE_phi2_deg",
                          "MAE_phi3_deg", "TrainTime_s"])
         writer.writerows(rows)
-    print("  Saved: pitnn_ablation_results.csv")
+    print(f"  Saved: {csv_path}")
 
 
 # ═════════════════════════════════════════════════════════════════════════════
 # PLOTS
 # ═════════════════════════════════════════════════════════════════════════════
 
-def plot_results(results):
-    """Bar chart of MAE per model and training curves."""
+def plot_results(results, title="Synthetic Only",
+                 bar_path="pitnn_ablation_results.png",
+                 train_path="pitnn_ablation_training.png",
+                 angle_path="pitnn_ablation_perangle.png"):
+    """Bar chart of MAE per model, training curves, and per-angle breakdown."""
 
     names  = [r["name"] for r in results]
     maes   = [r["test_mae_deg"] for r in results]
@@ -479,57 +483,52 @@ def plot_results(results):
     for r in results:
         n = r["name"]
         if "PITNN (full)" in n:
-            colors.append("#1a6bbd")        # blue — full model
+            colors.append("#1a6bbd")
         elif n.startswith("PITNN"):
-            colors.append("#5ba3d9")        # light blue — ablations
+            colors.append("#5ba3d9")
         else:
-            colors.append("#e07b39")        # orange — baselines
+            colors.append("#e07b39")
 
-    # ── Bar chart ─────────────────────────────────────────────────────────
+    # ── MAE bar chart ──────────────────────────────────────────────────────
     fig, ax = plt.subplots(figsize=(14, 5))
-    bars = ax.bar(range(len(names)), maes, color=colors, edgecolor="white",
-                  linewidth=0.8)
+    bars = ax.bar(range(len(names)), maes, color=colors,
+                  edgecolor="white", linewidth=0.8)
     ax.set_xticks(range(len(names)))
     ax.set_xticklabels(names, rotation=30, ha="right", fontsize=9)
     ax.set_ylabel("Test MAE (degrees)", fontsize=11)
-    ax.set_title("Ablation Study and Baseline Comparison — Test MAE", fontsize=13)
+    ax.set_title(f"Ablation Study & Baseline Comparison — Test MAE ({title})",
+                 fontsize=13)
     ax.yaxis.grid(True, alpha=0.35, linestyle="--")
     ax.set_axisbelow(True)
-
-    # Annotate bars
     for bar, mae in zip(bars, maes):
         ax.text(bar.get_x() + bar.get_width() / 2,
                 bar.get_height() + 0.003,
                 f"{mae:.3f}°", ha="center", va="bottom", fontsize=8)
-
-    # Legend patches
     from matplotlib.patches import Patch
     legend_elems = [
-        Patch(facecolor="#e07b39", label="Baselines"),
+        Patch(facecolor="#e07b39", label="Baselines (MLP / LSTM / GRU)"),
         Patch(facecolor="#5ba3d9", label="Ablations"),
         Patch(facecolor="#1a6bbd", label="Full PITNN"),
     ]
     ax.legend(handles=legend_elems, loc="upper left", fontsize=9)
-
     plt.tight_layout()
-    plt.savefig("pitnn_ablation_results.png", dpi=180, bbox_inches="tight")
+    plt.savefig(bar_path, dpi=180, bbox_inches="tight")
     plt.close()
-    print("  Saved: pitnn_ablation_results.png")
+    print(f"  Saved: {bar_path}")
 
     # ── Training curves ────────────────────────────────────────────────────
     n_models = len(results)
     n_cols   = 5
     n_rows   = math.ceil(n_models / n_cols)
     fig, axes = plt.subplots(n_rows, n_cols,
-                             figsize=(n_cols * 4, n_rows * 3),
-                             sharey=False)
-    axes_flat = axes.flatten() if n_models > 1 else [axes]
+                             figsize=(n_cols * 4, n_rows * 3))
+    axes_flat = axes.flatten() if hasattr(axes, "flatten") else [axes]
 
     for i, r in enumerate(results):
         ax = axes_flat[i]
-        epochs = range(1, len(r["hist_train"]) + 1)
-        ax.semilogy(epochs, r["hist_train"], label="Train", lw=1.5)
-        ax.semilogy(epochs, r["hist_val"],   label="Val",   lw=1.5, ls="--")
+        ep = range(1, len(r["hist_train"]) + 1)
+        ax.semilogy(ep, r["hist_train"], label="Train", lw=1.5)
+        ax.semilogy(ep, r["hist_val"],   label="Val",   lw=1.5, ls="--")
         ax.set_title(r["name"], fontsize=8)
         ax.set_xlabel("Epoch", fontsize=7)
         ax.set_ylabel("Loss", fontsize=7)
@@ -539,15 +538,16 @@ def plot_results(results):
     for j in range(i + 1, len(axes_flat)):
         axes_flat[j].set_visible(False)
 
-    plt.suptitle("Training & Validation Loss Curves — All Models", fontsize=11, y=1.01)
+    plt.suptitle(f"Training & Validation Loss — All Models ({title})",
+                 fontsize=11, y=1.01)
     plt.tight_layout()
-    plt.savefig("pitnn_ablation_training.png", dpi=150, bbox_inches="tight")
+    plt.savefig(train_path, dpi=150, bbox_inches="tight")
     plt.close()
-    print("  Saved: pitnn_ablation_training.png")
+    print(f"  Saved: {train_path}")
 
     # ── Per-angle MAE breakdown ────────────────────────────────────────────
-    x      = np.arange(len(names))
-    width  = 0.25
+    x     = np.arange(len(names))
+    width = 0.25
     fig, ax = plt.subplots(figsize=(14, 5))
     ax.bar(x - width, [r["mae_phi1_deg"] for r in results], width,
            label="φ1 MAE", color="#2196F3", edgecolor="white")
@@ -558,14 +558,92 @@ def plot_results(results):
     ax.set_xticks(x)
     ax.set_xticklabels(names, rotation=30, ha="right", fontsize=9)
     ax.set_ylabel("MAE (degrees)", fontsize=11)
-    ax.set_title("Per-Angle MAE Breakdown — All Models", fontsize=13)
+    ax.set_title(f"Per-Angle MAE Breakdown ({title})", fontsize=13)
     ax.yaxis.grid(True, alpha=0.35, linestyle="--")
     ax.set_axisbelow(True)
     ax.legend(fontsize=9)
     plt.tight_layout()
-    plt.savefig("pitnn_ablation_perangle.png", dpi=180, bbox_inches="tight")
+    plt.savefig(angle_path, dpi=180, bbox_inches="tight")
     plt.close()
-    print("  Saved: pitnn_ablation_perangle.png")
+    print(f"  Saved: {angle_path}")
+
+
+def plot_video_comparison(results_syn, results_vid,
+                          path="pitnn_ablation_video_comparison.png"):
+    """
+    Side-by-side grouped bar chart comparing synthetic-only vs
+    synthetic+video MAE for every model. Shows the benefit of video
+    augmentation for each architecture.
+    """
+    names  = [r["name"] for r in results_syn]
+    mae_s  = [r["test_mae_deg"] for r in results_syn]
+    mae_v  = [r["test_mae_deg"] for r in results_vid]
+
+    x     = np.arange(len(names))
+    width = 0.38
+    fig, ax = plt.subplots(figsize=(15, 5))
+    b1 = ax.bar(x - width / 2, mae_s, width, label="Synthetic only",
+                color="#5b9bd5", edgecolor="white")
+    b2 = ax.bar(x + width / 2, mae_v, width, label="Synthetic + video",
+                color="#ed7d31", edgecolor="white")
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(names, rotation=30, ha="right", fontsize=9)
+    ax.set_ylabel("Test MAE (degrees)", fontsize=11)
+    ax.set_title("Effect of Video Augmentation on All Model Variants",
+                 fontsize=13)
+    ax.yaxis.grid(True, alpha=0.35, linestyle="--")
+    ax.set_axisbelow(True)
+    ax.legend(fontsize=10)
+
+    # Annotate improvement arrows for PITNN (full) specifically
+    for i, (s, v) in enumerate(zip(mae_s, mae_v)):
+        if v < s:
+            ax.annotate("", xy=(x[i] + width / 2, v + 0.002),
+                        xytext=(x[i] - width / 2, s + 0.002),
+                        arrowprops=dict(arrowstyle="-|>", color="green",
+                                        lw=1.2))
+
+    plt.tight_layout()
+    plt.savefig(path, dpi=180, bbox_inches="tight")
+    plt.close()
+    print(f"  Saved: {path}")
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# SHARED MODEL BUILDER
+# Returns a fresh instance of every model variant for one training pass.
+# ═════════════════════════════════════════════════════════════════════════════
+
+def build_all_models():
+    """Return a list of (model_instance, name, physics_loss, kwargs) tuples."""
+    pitnn_kw = dict(d_in=8, d_model=128, n_heads=8, n_layers=4,
+                    d_ff=256, seq_len=20, dropout=0.1)
+    return [
+        # ── Baselines ───────────────────────────────────────────────────────
+        (MLP(seq_len=20, n_feat=8, hidden=512, n_layers=4, dropout=0.1),
+         "MLP",  False, {}),
+        (LSTMModel(n_feat=8, hidden=256, n_layers=2, dropout=0.1),
+         "LSTM", False, {}),
+        (GRUModel(n_feat=8, hidden=256, n_layers=2, dropout=0.1),
+         "GRU",  False, {}),
+        # ── Ablations ───────────────────────────────────────────────────────
+        (PITNN(**pitnn_kw), "PITNN – LP",
+         True, dict(lambda_p=1.0, lambda2=0.5, no_lp=True)),
+        (PITNN(**pitnn_kw), "PITNN – LZVS",
+         True, dict(lambda_p=1.0, lambda2=0.5, no_lzvs=True)),
+        (PITNN(**pitnn_kw), "PITNN – Lsym",
+         True, dict(lambda_p=1.0, lambda2=0.5, no_lsym=True)),
+        (PITNN(**pitnn_kw), "PITNN – warmup",
+         True, dict(lambda_p=1.0, lambda2=0.5, no_warmup=True)),
+        (PITNNNoPE(**pitnn_kw), "PITNN – PE",
+         True, dict(lambda_p=1.0, lambda2=0.5)),
+        (PITNNPostLN(**pitnn_kw), "PITNN – Pre-LN",
+         True, dict(lambda_p=1.0, lambda2=0.5)),
+        # ── Full PITNN ──────────────────────────────────────────────────────
+        (PITNN(**pitnn_kw), "PITNN (full)",
+         True, dict(lambda_p=1.0, lambda2=0.5, warmup_epochs=20)),
+    ]
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -574,11 +652,16 @@ def plot_results(results):
 
 def main():
     parser = argparse.ArgumentParser(description="PITNN Ablation Study")
-    parser.add_argument("--epochs", type=int, default=150,
+    parser.add_argument("--epochs",  type=int,  default=150,
                         help="Training epochs per model (default 150)")
-    parser.add_argument("--samples", type=int, default=10000,
-                        help="Dataset size (default 10000)")
-    parser.add_argument("--fast", action="store_true",
+    parser.add_argument("--samples", type=int,  default=10000,
+                        help="Synthetic dataset size (default 10000)")
+    parser.add_argument("--video",   type=str,  default=None,
+                        help="Path to oscilloscope/simulation video. If provided, "
+                             "all models are trained a second time on the combined "
+                             "synthetic + video dataset and a separate results table "
+                             "is produced for direct comparison.")
+    parser.add_argument("--fast",    action="store_true",
                         help="Quick run: 50 epochs, 3000 samples (for testing)")
     args = parser.parse_args()
 
@@ -590,34 +673,70 @@ def main():
 
     print("=" * 70)
     print("  PITNN — Ablation Study & Baseline Comparison")
-    print(f"  Device: {device}  |  Epochs: {args.epochs}  |  Samples: {args.samples}")
+    print(f"  Device : {device}")
+    print(f"  Epochs : {args.epochs}  |  Samples: {args.samples}")
+    if args.video:
+        print(f"  Video  : {args.video}")
     print("=" * 70)
 
-    # ── [1] Generate dataset (one shared dataset for all models) ─────────
-    print("\n[1] Generating shared dataset …")
+    # ── [1] Synthetic dataset ─────────────────────────────────────────────
+    print("\n[1] Generating shared synthetic dataset …")
     X_norm, Y, mu, sigma, X_raw = generate_dataset(
         n_samples=args.samples, seq_len=20, seed=42
     )
 
-    # ── [2] Split into train / val / test (identical across all models) ──
-    N     = len(X_norm)
-    n_val = int(N * 0.15)
-    n_tr  = N - 2 * n_val
-    perm  = np.random.RandomState(42).permutation(N)
-    tr_i  = perm[:n_tr]
-    va_i  = perm[n_tr : n_tr + n_val]
-    te_i  = perm[n_tr + n_val :]
+    # ── [2] Optional video dataset ────────────────────────────────────────
+    video_X_norm = video_X_raw = video_Y = None
+    if args.video:
+        print(f"\n[2] Extracting video dataset from: {args.video}")
+        try:
+            extractor = VideoWaveformExtractor(
+                args.video,
+                fsw_hardware = FSW,
+                V1_hardware  = V1_NOM,
+                V2_hardware  = V1_NOM,
+                verbose      = True,
+            )
+            extractor.plot_extraction("pitnn_ablation_video_extraction.png")
+            video_result = extractor.build_dataset(mu=mu, sigma=sigma)
+            if video_result is not None:
+                video_X_norm, video_Y, _, _, video_X_raw = video_result
+                print(f"  Video samples extracted: {len(video_Y)}")
+                # Merge for the combined dataset
+                X_norm_vid = np.concatenate([X_norm, video_X_norm], axis=0)
+                X_raw_vid  = np.concatenate([X_raw,  video_X_raw],  axis=0)
+                Y_vid      = np.concatenate([Y,      video_Y],       axis=0)
+                print(f"  Combined: {len(X_norm)} synthetic + {len(video_Y)} "
+                      f"video = {len(X_norm_vid)} total")
+            else:
+                print("  Warning: video extraction returned no samples — "
+                      "skipping video training pass")
+                args.video = None
+        except Exception as e:
+            print(f"  Warning: video extraction failed ({e}) — "
+                  f"skipping video training pass")
+            args.video = None
 
-    def tt(a): return torch.from_numpy(a).float().to(device)
+    # ── [3] Fixed train/val/test split (same indices for all models) ──────
+    def make_split(Xn, Xr, Yl):
+        N     = len(Xn)
+        n_val = int(N * 0.15)
+        n_tr  = N - 2 * n_val
+        perm  = np.random.RandomState(42).permutation(N)
+        tr_i  = perm[:n_tr]
+        va_i  = perm[n_tr : n_tr + n_val]
+        te_i  = perm[n_tr + n_val :]
+        def tt(a): return torch.from_numpy(a).float().to(device)
+        return (tt(Xn[tr_i]), tt(Xr[tr_i]), tt(Yl[tr_i]),
+                tt(Xn[va_i]), tt(Xr[va_i]), tt(Yl[va_i]),
+                tt(Xn[te_i]), tt(Xr[te_i]), tt(Yl[te_i]),
+                n_tr, n_val)
 
-    Xn_tr, Xn_va, Xn_te = tt(X_norm[tr_i]), tt(X_norm[va_i]), tt(X_norm[te_i])
-    Xr_tr, Xr_va, Xr_te = tt(X_raw[tr_i]),  tt(X_raw[va_i]),  tt(X_raw[te_i])
-    Ytr,   Yva,   Yte   = tt(Y[tr_i]),       tt(Y[va_i]),      tt(Y[te_i])
+    Xn_tr, Xr_tr, Ytr, Xn_va, Xr_va, Yva, Xn_te, Xr_te, Yte, n_tr, n_val = \
+        make_split(X_norm, X_raw, Y)
+    print(f"\n  Synthetic split: {n_tr} train / {n_val} val / {n_val} test")
 
-    print(f"  Split: {n_tr} train / {n_val} val / {n_val} test")
-
-    # ── Common training kwargs ────────────────────────────────────────────
-    common = dict(
+    common_syn = dict(
         Xn_tr=Xn_tr, Xr_tr=Xr_tr, Ytr=Ytr,
         Xn_va=Xn_va, Xr_va=Xr_va, Yva=Yva,
         Xn_te=Xn_te, Xr_te=Xr_te, Yte=Yte,
@@ -625,111 +744,95 @@ def main():
         warmup_epochs=20, device=device,
     )
 
-    results = []
-
-    # ══════════════════════════════════════════════════════════════════════
-    # BASELINES
-    # ══════════════════════════════════════════════════════════════════════
-
+    # ── [4] SYNTHETIC-ONLY training pass ──────────────────────────────────
     print("\n" + "═" * 70)
-    print("  BASELINES")
+    print("  PASS 1 — Synthetic Data Only")
     print("═" * 70)
 
-    # 1. MLP
-    results.append(train_model(
-        MLP(seq_len=20, n_feat=8, hidden=512, n_layers=4, dropout=0.1),
-        "MLP", physics_loss=False, **common,
-    ))
+    results_syn = []
+    for model, name, phys, extra_kw in build_all_models():
+        results_syn.append(
+            train_model(model, name, physics_loss=phys, **extra_kw, **common_syn)
+        )
 
-    # 2. LSTM
-    results.append(train_model(
-        LSTMModel(n_feat=8, hidden=256, n_layers=2, dropout=0.1),
-        "LSTM", physics_loss=False, **common,
-    ))
+    print_results_table(results_syn,
+                        title="Synthetic Only",
+                        csv_path="pitnn_ablation_results.csv")
+    plot_results(results_syn,
+                 title="Synthetic Only",
+                 bar_path="pitnn_ablation_results.png",
+                 train_path="pitnn_ablation_training.png",
+                 angle_path="pitnn_ablation_perangle.png")
 
-    # 3. Vanilla Transformer (Post-LN, no physics loss)
-    results.append(train_model(
-        VanillaTransformer(d_in=8, d_model=128, n_heads=8, n_layers=4,
-                           d_ff=256, seq_len=20, dropout=0.1),
-        "Vanilla Transformer", physics_loss=False, **common,
-    ))
+    # ── [5] SYNTHETIC + VIDEO training pass (only if --video supplied) ────
+    if args.video and video_X_norm is not None:
+        # Use the same test set as the synthetic pass so results are
+        # directly comparable (test set comes from the synthetic split).
+        Xn_tr_v, Xr_tr_v, Ytr_v, Xn_va_v, Xr_va_v, Yva_v, _, _, _, n_tr_v, n_val_v = \
+            make_split(X_norm_vid, X_raw_vid, Y_vid)
 
-    # ══════════════════════════════════════════════════════════════════════
-    # ABLATIONS  (full PITNN with one component removed at a time)
-    # ══════════════════════════════════════════════════════════════════════
+        print(f"\n  Combined split: {n_tr_v} train / {n_val_v} val | "
+              f"test set unchanged from synthetic pass")
 
-    print("\n" + "═" * 70)
-    print("  ABLATIONS")
-    print("═" * 70)
+        common_vid = dict(
+            Xn_tr=Xn_tr_v, Xr_tr=Xr_tr_v, Ytr=Ytr_v,
+            Xn_va=Xn_va_v, Xr_va=Xr_va_v, Yva=Yva_v,
+            # Keep the same test set for a fair comparison
+            Xn_te=Xn_te, Xr_te=Xr_te, Yte=Yte,
+            epochs=args.epochs, batch_size=64, lr=1e-4,
+            warmup_epochs=20, device=device,
+        )
 
-    pitnn_kwargs = dict(
-        d_in=8, d_model=128, n_heads=8, n_layers=4,
-        d_ff=256, seq_len=20, dropout=0.1,
-    )
+        print("\n" + "═" * 70)
+        print("  PASS 2 — Synthetic + Video Data")
+        print("═" * 70)
 
-    # 4. PITNN without power physics loss (LP = 0)
-    results.append(train_model(
-        PITNN(**pitnn_kwargs), "PITNN – LP",
-        physics_loss=True, lambda_p=1.0, lambda2=0.5,
-        no_lp=True, **common,
-    ))
+        results_vid = []
+        for model, name, phys, extra_kw in build_all_models():
+            results_vid.append(
+                train_model(model, name, physics_loss=phys,
+                            **extra_kw, **common_vid)
+            )
 
-    # 5. PITNN without ZVS loss (LZVS = 0)
-    results.append(train_model(
-        PITNN(**pitnn_kwargs), "PITNN – LZVS",
-        physics_loss=True, lambda_p=1.0, lambda2=0.5,
-        no_lzvs=True, **common,
-    ))
+        print_results_table(results_vid,
+                            title="Synthetic + Video",
+                            csv_path="pitnn_ablation_video_results.csv")
+        plot_results(results_vid,
+                     title="Synthetic + Video",
+                     bar_path="pitnn_ablation_video_results.png",
+                     train_path="pitnn_ablation_video_training.png",
+                     angle_path="pitnn_ablation_video_perangle.png")
+        plot_video_comparison(results_syn, results_vid)
 
-    # 6. PITNN without symmetry penalty (Lsym = 0)
-    results.append(train_model(
-        PITNN(**pitnn_kwargs), "PITNN – Lsym",
-        physics_loss=True, lambda_p=1.0, lambda2=0.5,
-        no_lsym=True, **common,
-    ))
+        # Print delta table — how much does video augmentation help each model
+        print("\n" + "=" * 80)
+        print("  VIDEO AUGMENTATION DELTA  (Synthetic+Video MAE − Synthetic MAE)")
+        print("=" * 80)
+        print(f"  {'Model':<30}  {'Syn MAE (°)':>12}  "
+              f"{'Vid MAE (°)':>12}  {'Δ MAE (°)':>12}  {'Δ%':>8}")
+        print("  " + "-" * 76)
+        for rs, rv in zip(results_syn, results_vid):
+            delta    = rv["test_mae_deg"] - rs["test_mae_deg"]
+            delta_pct = delta / max(rs["test_mae_deg"], 1e-9) * 100
+            marker = "▼" if delta < 0 else ("▲" if delta > 0 else " ")
+            print(f"  {rs['name']:<30}  {rs['test_mae_deg']:>12.3f}  "
+                  f"{rv['test_mae_deg']:>12.3f}  "
+                  f"{marker}{abs(delta):>11.3f}  {delta_pct:>7.1f}%")
+        print("=" * 80)
 
-    # 7. PITNN without curriculum warmup (physics loss from epoch 1)
-    results.append(train_model(
-        PITNN(**pitnn_kwargs), "PITNN – warmup",
-        physics_loss=True, lambda_p=1.0, lambda2=0.5,
-        no_warmup=True, **common,
-    ))
-
-    # 8. PITNN without positional encoding
-    results.append(train_model(
-        PITNNNoPE(**pitnn_kwargs), "PITNN – PE",
-        physics_loss=True, lambda_p=1.0, lambda2=0.5, **common,
-    ))
-
-    # 9. PITNN with Post-LN instead of Pre-LN
-    results.append(train_model(
-        PITNNPostLN(**pitnn_kwargs), "PITNN – Pre-LN",
-        physics_loss=True, lambda_p=1.0, lambda2=0.5, **common,
-    ))
-
-    # ══════════════════════════════════════════════════════════════════════
-    # FULL PITNN
-    # ══════════════════════════════════════════════════════════════════════
-
-    print("\n" + "═" * 70)
-    print("  FULL PITNN")
-    print("═" * 70)
-
-    results.append(train_model(
-        PITNN(**pitnn_kwargs), "PITNN (full)",
-        physics_loss=True, lambda_p=1.0, lambda2=0.5,
-        warmup_epochs=20, **common,
-    ))
-
-    # ── Results ───────────────────────────────────────────────────────────
-    print_results_table(results)
-    plot_results(results)
-
+    # ── [6] Summary ───────────────────────────────────────────────────────
     print("\nDone. Output files:")
-    print("  pitnn_ablation_results.csv     — full results table")
-    print("  pitnn_ablation_results.png     — MAE bar chart")
-    print("  pitnn_ablation_training.png    — training curves")
-    print("  pitnn_ablation_perangle.png    — per-angle MAE breakdown")
+    print("  pitnn_ablation_results.csv          — synthetic-only results")
+    print("  pitnn_ablation_results.png          — MAE bar chart (synthetic)")
+    print("  pitnn_ablation_training.png         — training curves (synthetic)")
+    print("  pitnn_ablation_perangle.png         — per-angle MAE (synthetic)")
+    if args.video:
+        print("  pitnn_ablation_video_results.csv    — synthetic+video results")
+        print("  pitnn_ablation_video_results.png    — MAE bar chart (video)")
+        print("  pitnn_ablation_video_training.png   — training curves (video)")
+        print("  pitnn_ablation_video_perangle.png   — per-angle MAE (video)")
+        print("  pitnn_ablation_video_comparison.png — side-by-side comparison")
+        print("  pitnn_ablation_video_extraction.png — video extraction diagnostic")
 
 
 if __name__ == "__main__":

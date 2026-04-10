@@ -71,6 +71,6 @@ python pitnn_onnx_inference.py # Uses ONNX Runtime instead of PyTorch, making it
 └─────────────────────────────────┘         └──────────────────────────────┘
 
 # Ablation and baseline comparisons
-python pitnn_ablation.py
+python pitnn_ablation.py --video Video_Project.mp4
 
-python pitnn_ablation.py --fast # for a quick sanity check before the full 10-model × 150-epoch run:
+python pitnn_ablation.py --fast --video Video_Project.mp4 # for a quick sanity check before the full 10-model × 150-epoch run:
