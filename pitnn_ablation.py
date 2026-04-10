@@ -345,16 +345,33 @@ def train_model(
                 Pref_b = xr_b[:, -1, 6]
                 iL_seq = xr_b[:, :, 2]
 
-                loss, info = loss_fn(phi_pred, yb, V1_b, V2_b, Pref_b, iL_seq)
-
-                # Optional ablation: zero out Lsym contribution
                 if no_lsym:
-                    # Recompute without symmetry term
-                    loss = info["L_data"] + loss_fn.physics_weight * (
-                        info["LP"] + (info["LZVS"] if not no_lzvs else 0.0)
-                    )
-                    if isinstance(loss, float):
-                        loss = torch.tensor(loss, device=device, requires_grad=False)
+                    # Ablation: exclude Lsym — recompute directly from tensors
+                    # so autograd graph is preserved. Never pull from info dict
+                    # (those are .item() floats and have no grad_fn).
+                    w_mse  = torch.tensor([2., 2., 3.], device=phi_pred.device)
+                    L_data = torch.mean(w_mse * (phi_pred - yb) ** 2)
+
+                    phi1_t = phi_pred[:, 0]; phi3_t = phi_pred[:, 2]
+                    scale  = N_TURNS * V1_b * V2_b / (V1_NOM ** 2)
+                    P_pred = scale * K_POWER * (phi1_t / PI) * phi3_t * (
+                        1.0 - phi3_t / B_POWER)
+                    LP     = torch.mean((P_pred - Pref_b) ** 2 /
+                                        (Pref_b ** 2 + 1.0))
+
+                    if no_lzvs:
+                        L_physics = LP
+                    else:
+                        d1   = phi_pred[:, 0] / PI
+                        i0   = (V1_b * d1 - N_TURNS * V2_b * phi3_t / PI) / (
+                                2.0 * LK * FSW)
+                        LZVS = torch.mean(
+                            torch.clamp(-i0, min=0.0) / 100.0)
+                        L_physics = LP + loss_fn.lambda2 * LZVS
+
+                    loss = L_data + loss_fn.physics_weight * loss_fn.lambda_p * L_physics
+                else:
+                    loss, _ = loss_fn(phi_pred, yb, V1_b, V2_b, Pref_b, iL_seq)
             else:
                 # Pure weighted MSE for baselines
                 loss = torch.mean(w * (phi_pred - yb) ** 2)
@@ -642,7 +659,7 @@ def build_all_models():
          True, dict(lambda_p=1.0, lambda2=0.5)),
         # ── Full PITNN ──────────────────────────────────────────────────────
         (PITNN(**pitnn_kw), "PITNN (full)",
-         True, dict(lambda_p=1.0, lambda2=0.5, warmup_epochs=20)),
+         True, dict(lambda_p=1.0, lambda2=0.5)),
     ]
 
 
