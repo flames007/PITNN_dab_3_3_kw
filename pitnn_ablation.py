@@ -562,6 +562,20 @@ def plot_results(results, title="Synthetic Only",
     plt.close()
     print(f"  Saved: {train_path}")
 
+    # ── Combined baseline curves (MLP / LSTM / GRU on shared axes) ────────
+    sfx = "_video" if "video" in train_path.lower() else ""
+    plot_baselines(
+        results, title=title,
+        curves_path=f"pitnn_ablation{sfx}_baseline_curves.png",
+        parity_path=f"pitnn_ablation{sfx}_baseline_parity.png",
+    )
+
+    # ── Combined ablation curves (all PITNN variants on shared axes) ───────
+    plot_ablations(
+        results, title=title,
+        curves_path=f"pitnn_ablation{sfx}_ablation_curves.png",
+    )
+
     # ── Per-angle MAE breakdown ────────────────────────────────────────────
     x     = np.arange(len(names))
     width = 0.25
@@ -583,6 +597,146 @@ def plot_results(results, title="Synthetic Only",
     plt.savefig(angle_path, dpi=180, bbox_inches="tight")
     plt.close()
     print(f"  Saved: {angle_path}")
+
+
+def plot_baselines(results, title="Synthetic Only",
+                   curves_path="pitnn_ablation_baseline_curves.png",
+                   parity_path="pitnn_ablation_baseline_parity.png"):
+    """
+    Dedicated baseline comparison plots — all three baselines (MLP, LSTM, GRU)
+    shown together on shared axes so their curves can be directly compared.
+
+    Produces two figures:
+      1. Train & validation loss on one combined plot (3 curves each, log scale)
+      2. Parity plots (predicted vs optimal) for all three baselines in a
+         single row — one column per model, one sub-row per angle (φ1/φ2/φ3)
+    """
+    BASELINE_NAMES  = {"MLP", "LSTM", "GRU"}
+    BASELINE_COLORS = {"MLP": "#e07b39", "LSTM": "#c0392b", "GRU": "#8e44ad"}
+    LINE_STYLES     = {"MLP": "-",       "LSTM": "--",       "GRU": "-."}
+
+    baselines = [r for r in results if r["name"] in BASELINE_NAMES]
+    if not baselines:
+        return
+
+    # ── 1. Combined train/val loss curves ────────────────────────────────────
+    fig, axes = plt.subplots(1, 2, figsize=(13, 4.5))
+
+    ax_tr, ax_va = axes
+
+    for r in baselines:
+        name  = r["name"]
+        col   = BASELINE_COLORS.get(name, "#555555")
+        ls    = LINE_STYLES.get(name, "-")
+        ep    = range(1, len(r["hist_train"]) + 1)
+        ax_tr.semilogy(ep, r["hist_train"], color=col, ls=ls, lw=2.0,
+                       label=name)
+        ax_va.semilogy(ep, r["hist_val"],   color=col, ls=ls, lw=2.0,
+                       label=name)
+
+    for ax, ylabel, panel_title in [
+        (ax_tr, "Training Loss (log)",   "Training Loss"),
+        (ax_va, "Validation Loss (log)", "Validation Loss"),
+    ]:
+        ax.set_xlabel("Epoch", fontsize=11)
+        ax.set_ylabel(ylabel, fontsize=11)
+        ax.set_title(panel_title, fontsize=12)
+        ax.legend(fontsize=10)
+        ax.yaxis.grid(True, alpha=0.35, linestyle="--")
+        ax.set_axisbelow(True)
+
+    plt.suptitle(f"Baseline Model Training Curves ({title})", fontsize=13, y=1.02)
+    plt.tight_layout()
+    plt.savefig(curves_path, dpi=180, bbox_inches="tight")
+    plt.close()
+    print(f"  Saved: {curves_path}")
+
+    # ── 2. Parity plots — one column per baseline, one row per angle ─────────
+    angle_labels = ["φ₁ (rad)", "φ₂ (rad)", "φ₃ (rad)"]
+    n_bl  = len(baselines)
+    n_ang = 3
+    fig, axes = plt.subplots(n_ang, n_bl,
+                             figsize=(4.5 * n_bl, 4.0 * n_ang),
+                             squeeze=False)
+
+    for col_i, r in enumerate(baselines):
+        Yt = r["Y_test"]   # (N, 3)
+        Yp = r["Y_pred"]   # (N, 3)
+        col = BASELINE_COLORS.get(r["name"], "#555555")
+
+        for row_i in range(n_ang):
+            ax = axes[row_i][col_i]
+            ax.scatter(Yt[:, row_i], Yp[:, row_i],
+                       alpha=0.35, s=6, color=col, rasterized=True)
+            lo = min(Yt[:, row_i].min(), Yp[:, row_i].min())
+            hi = max(Yt[:, row_i].max(), Yp[:, row_i].max())
+            ax.plot([lo, hi], [lo, hi], "k--", lw=1.2)
+            ax.set_xlabel("Optimal (rad)", fontsize=9)
+            ax.set_ylabel("Predicted (rad)", fontsize=9)
+            mae_deg = math.degrees(abs(Yt[:, row_i] - Yp[:, row_i]).mean())
+            ax.set_title(f"{r['name']} — {angle_labels[row_i]}\nMAE={mae_deg:.3f}°",
+                         fontsize=9)
+            ax.tick_params(labelsize=8)
+
+    plt.suptitle(f"Baseline Parity Plots — Predicted vs Optimal ({title})",
+                 fontsize=12, y=1.01)
+    plt.tight_layout()
+    plt.savefig(parity_path, dpi=180, bbox_inches="tight")
+    plt.close()
+    print(f"  Saved: {parity_path}")
+
+
+def plot_ablations(results, title="Synthetic Only",
+                   curves_path="pitnn_ablation_ablation_curves.png"):
+    """
+    Combined training/validation loss curves for all PITNN ablation variants
+    and the full PITNN on a single pair of axes, so the effect of each
+    removed component on convergence is directly visible.
+    """
+    ABLATION_COLORS = {
+        "PITNN – LP":     "#e74c3c",
+        "PITNN – LZVS":   "#e67e22",
+        "PITNN – Lsym":   "#f1c40f",
+        "PITNN – warmup": "#2ecc71",
+        "PITNN – PE":     "#1abc9c",
+        "PITNN – Pre-LN": "#9b59b6",
+        "PITNN (full)":   "#1a6bbd",
+    }
+
+    ablations = [r for r in results
+                 if r["name"].startswith("PITNN")]
+    if not ablations:
+        return
+
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+    ax_tr, ax_va = axes
+
+    for r in ablations:
+        name = r["name"]
+        col  = ABLATION_COLORS.get(name, "#555555")
+        lw   = 2.5 if name == "PITNN (full)" else 1.5
+        ls   = "-" if name == "PITNN (full)" else "--"
+        ep   = range(1, len(r["hist_train"]) + 1)
+        ax_tr.semilogy(ep, r["hist_train"], color=col, lw=lw, ls=ls, label=name)
+        ax_va.semilogy(ep, r["hist_val"],   color=col, lw=lw, ls=ls, label=name)
+
+    for ax, ylabel, panel_title in [
+        (ax_tr, "Training Loss (log)",   "Training Loss"),
+        (ax_va, "Validation Loss (log)", "Validation Loss"),
+    ]:
+        ax.set_xlabel("Epoch", fontsize=11)
+        ax.set_ylabel(ylabel, fontsize=11)
+        ax.set_title(panel_title, fontsize=12)
+        ax.legend(fontsize=8, loc="upper right")
+        ax.yaxis.grid(True, alpha=0.35, linestyle="--")
+        ax.set_axisbelow(True)
+
+    plt.suptitle(f"PITNN Ablation Training Curves ({title})", fontsize=13, y=1.02)
+    plt.tight_layout()
+    plt.savefig(curves_path, dpi=180, bbox_inches="tight")
+    plt.close()
+    print(f"  Saved: {curves_path}")
+
 
 
 def plot_video_comparison(results_syn, results_vid,
