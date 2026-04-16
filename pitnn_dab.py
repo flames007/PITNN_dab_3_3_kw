@@ -1088,7 +1088,7 @@ def plot_all(hist,dab):
     ax.axvline(PHI3_MAX, color="blue", ls=":", lw=2.0, label=f"φ₃_max={PHI3_MAX}")
     ax.set_xlabel("φ₃ (rad)")
     ax.set_ylabel("P (kW)")
-    ax.set_title("Power vs φ₃  |  φ₁=φ₂=0.95π")
+    ax.set_title("Power vs φ₃ | φ₂ | φ₁")
     ax.grid(True, alpha=0.3, linestyle="--")
     ax.legend()
 
@@ -1220,7 +1220,7 @@ def main():
 
     print(f"\n  {'Condition':<12} {'V1':>5} {'V2':>5} {'Pref':>6}  "
           f"{'φ1':>7} {'φ2':>7} {'φ3':>6}  "
-          f"{'P_calc':>8} {'Irms':>7} {'ZVS':>5} {'|ΔP|%':>7} {'t(µs)':>7}")
+          f"{'P_calc':>8} {'Irms':>7} {'ZVS':>5} {'|ΔP|%':>7} {'Inference latency(µs)':>7}")
     print(f"  {'─'*92}")
     for V1,V2,Pref,label in ops:
         ctrl.reset()
