@@ -248,6 +248,28 @@ class VideoWaveformExtractor:
         cap   = cv2.VideoCapture(self.video_path)
         fps   = cap.get(cv2.CAP_PROP_FPS)
         total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
+        # OpenCV returns 0 fps for some codecs/containers on Windows.
+        # Fall back to counting frames manually if needed.
+        if fps <= 0:
+            self._log("WARNING: OpenCV reported 0 fps — counting frames manually")
+            count = 0
+            while True:
+                ret, _ = cap.read()
+                if not ret:
+                    break
+                count += 1
+            total = count
+            fps   = 30.0   # assume 30 fps if unreadable; adjust if known
+            cap.release()
+            cap = cv2.VideoCapture(self.video_path)  # reopen from start
+            self._log(f"Manual count: {total} frames, assuming {fps:.1f} fps")
+
+        if total <= 0:
+            self._log("ERROR: No frames found in video — check file path and codec")
+            cap.release()
+            return []
+
         self._log(f"Video: {total} frames @ {fps:.1f}fps = {total/fps:.1f}s")
 
         # ── Detect panels from reference frame ─────────────────────────────
@@ -1210,8 +1232,12 @@ def main():
     print("\n[5] Plots")
     plot_all(hist,dab)
 
-    # [7] Inference
+    # [7] Inference — PITNN vs offline solver computational comparison
     print("\n[6] Real-Time Inference  (§V-E, Eq. 38: φ_TPS = f_θ(X))")
+    print("    Solver(µs) = median of 5 runs of solve_optimal_phi() — offline optimizer")
+    print("    Inf.(µs)   = PITNN Transformer forward pass only (GPU, torch.no_grad)")
+    print("    Speedup    = Solver(µs) / Inf.(µs)\n")
+
     ctrl = PITNNController(model,mu,sigma,dab,device=device)
     ops  = [(800,800,10000,"10kW nom"),(760,840, 8000,"8kW V-var"),
             (800,800,20000,"20kW"),    (800,800, 5000,"5kW light"),
@@ -1220,19 +1246,51 @@ def main():
 
     print(f"\n  {'Condition':<12} {'V1':>5} {'V2':>5} {'Pref':>6}  "
           f"{'φ1':>7} {'φ2':>7} {'φ3':>6}  "
-          f"{'P_calc':>8} {'Irms':>7} {'ZVS':>5} {'|ΔP|%':>7} {'Inference latency(µs)':>7}")
-    print(f"  {'─'*92}")
+          f"{'P_calc':>8} {'Irms':>7} {'ZVS':>5} {'|ΔP|%':>6}  "
+          f"{'Solver(µs)':>11} {'Inf.(µs)':>9} {'Speedup':>8}")
+    print(f"  {'─'*110}")
+
+    total_solver_us = 0.0
+    total_inf_us    = 0.0
+
     for V1,V2,Pref,label in ops:
-        ctrl.reset()
         dab.V1,dab.V2=float(V1),float(V2)
-        phi_seed=dab.solve_optimal_phi(float(Pref))
-        r=ctrl.step(float(V1),float(V2),None,float(Pref),phi_seed,reset=True)
-        phi=r["phi_TPS"]
+
+        # Time the offline solver — median of 5 runs for a stable estimate
+        solver_times = []
+        for _ in range(5):
+            t_s = time.perf_counter()
+            phi_seed = dab.solve_optimal_phi(float(Pref))
+            solver_times.append((time.perf_counter()-t_s)*1e6)
+        solver_us = float(np.median(solver_times))
+
+        # PITNN inference
+        ctrl.reset()
+        r   = ctrl.step(float(V1),float(V2),None,float(Pref),phi_seed,reset=True)
+        phi = r["phi_TPS"]
+        inf_us  = r["inf_us"]
+        speedup = solver_us / max(inf_us, 0.001)
+
+        total_solver_us += solver_us
+        total_inf_us    += inf_us
+
         print(f"  {label:<12} {V1:>5} {V2:>5} {Pref:>6}  "
               f"{phi[0]:>7.4f} {phi[1]:>7.4f} {phi[2]:>6.4f}  "
               f"{r['P_calc']:>8.1f} {r['Irms']:>7.4f} "
-              f"{'YES' if r['zvs_ok'] else 'NO':>5}  "
-              f"{r['P_err_pct']:>6.1f}% {r['inf_us']:>7.1f}")
+              f"{'YES' if r['zvs_ok'] else 'NO':>5} "
+              f"{r['P_err_pct']:>6.1f}%  "
+              f"{solver_us:>11.1f} {inf_us:>9.1f} {speedup:>7.0f}x")
+
+    n       = len(ops)
+    avg_sol = total_solver_us / n
+    avg_inf = total_inf_us    / n
+    avg_spd = avg_sol / max(avg_inf, 0.001)
+    print(f"  {'─'*110}")
+    print(f"  {'Average':>79} {avg_sol:>11.1f} {avg_inf:>9.1f} {avg_spd:>7.0f}x")
+    print(f"\n  Offline solver: adaptive grid search + brentq root-finding per condition.")
+    print(f"  PITNN replaces it with a single Transformer forward pass.")
+    print(f"  Average speedup: {avg_spd:.0f}x  "
+          f"(Solver: {avg_sol:.0f}µs  vs  Inf.: {avg_inf:.0f}µs)")
 
     print(f"\n{'='*70}")
     print(f"  Test MSE: {hist['test_mse']:.6f} rad²")
