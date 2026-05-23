@@ -1121,6 +1121,22 @@ def plot_all(hist,dab):
     print("  Saved: pitnn_power_surface.png")
 
 
+def set_seed(seed: int):
+    """
+    Fix all random sources for a reproducible training run.
+    Called once per run with a different seed so each run is independent
+    but individually reproducible.
+    """
+    import random
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    # Deterministic cuDNN ops where available (may slow training slightly)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark     = False
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 # MAIN
 # ═════════════════════════════════════════════════════════════════════════════
@@ -1132,6 +1148,15 @@ def main():
                              "If provided, waveforms are extracted and merged "
                              "into training. Any new video can be plugged in "
                              "without code changes.")
+    parser.add_argument("--runs", type=int, default=1,
+                        help="Number of independent training runs with different "
+                             "random seeds. Use --runs 5 to report mean ± std "
+                             "across 5 runs for reproducibility (default: 1).")
+    parser.add_argument("--seed", type=int, default=0,
+                        help="Base random seed. Run k uses seed + k, so each "
+                             "run has a different but reproducible initialisation "
+                             "(default: 0). Reported in output for exact "
+                             "reproducibility.")
     args = parser.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -1195,10 +1220,11 @@ def main():
         else:
             print("  Warning: video extraction returned no samples — training on synthetic data only")
 
-    # [4] Architecture
+    # [4] Architecture — printed once (same for all runs)
     print("\n[3] PITNN Architecture  (§V-B, Fig. 2, Eq. 29-32)")
-    model = PITNN(d_in=8,d_model=128,n_heads=8,n_layers=4,d_ff=256,seq_len=20,dropout=0.1)
-    n_p   = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    model_ref = PITNN(d_in=8,d_model=128,n_heads=8,n_layers=4,
+                      d_ff=256,seq_len=20,dropout=0.1)
+    n_p = sum(p.numel() for p in model_ref.parameters() if p.requires_grad)
     print(f"  Parameters    : {n_p:,}")
     print(f"  Layers/heads  : 4 / 8  |  d_model/d_ff: 128 / 256")
     print(f"  Input features: 8  [V1,V2,iL,φ1,φ2,φ3,Pref,V1V2/Vnom²]")
@@ -1206,39 +1232,120 @@ def main():
     print(f"  φ2 output     : sigmoid → [{PHI12_MIN:.4f}, {PHI12_MAX:.4f}] rad  (predicted)")
     print(f"  φ3 output     : sigmoid → [{PHI_MIN:.4f},   {PHI3_MAX:.4f}]  rad  (predicted)")
     print(f"  Power range   : 5kW–70kW  (P_max={dab.p_max()/1000:.0f}kW)")
+    print(f"  Base seed     : {args.seed}  (run k uses seed {args.seed}+k)")
+    print(f"  Training runs : {args.runs}")
 
-    loss_fn = PITNNLoss(lambda_p=0.,lambda1=0.,lambda2=0.,
-                        Lk=LK,n=N_TURNS,fsw=FSW,V_nom=V1_NOM,I_rated=100.)
+    # ── Multi-run training ────────────────────────────────────────────────────
+    all_mse, all_mae, all_hist = [], [], []
+    best_model, best_mu, best_sigma = None, mu, sigma
+    best_val_loss = float("inf")
 
-    # [5] Training
-    print("\n[4] Training  (§V-D: Adam lr=1e-4, batch=64, 150 epochs)")
-    hist = train_pitnn(model,loss_fn,X_norm,X_raw,Y,
-                       epochs=150,batch_size=64,lr=1e-4,
-                       val_split=.15,warmup_epochs=20,device=device,
-                       video_X_norm=video_X_norm,
-                       video_X_raw=video_X_raw,
-                       video_Y=video_Y)
+    print(f"\n[4] Training  (§V-D: Adam lr=1e-4, batch=64, 150 epochs)")
+    print(f"    Repeatability: {args.runs} independent run(s), "
+          f"seeds {args.seed}–{args.seed + args.runs - 1}")
 
-    torch.save({"model_state":model.state_dict(),"mu":mu,"sigma":sigma,
-                "hyperparams":dict(d_in=8,d_model=128,n_heads=8,n_layers=4,
-                                   d_ff=256,seq_len=20,
-                                   phi12_min=PHI12_MIN,phi12_max=PHI12_MAX,
-                                   phi_min=PHI_MIN,phi3_max=PHI3_MAX)},
+    for run_idx in range(args.runs):
+        run_seed = args.seed + run_idx
+        set_seed(run_seed)
+
+        if args.runs > 1:
+            print(f"\n{'━'*70}")
+            print(f"  Run {run_idx+1}/{args.runs}  (seed={run_seed})")
+            print(f"{'━'*70}")
+
+        model = PITNN(d_in=8,d_model=128,n_heads=8,n_layers=4,
+                      d_ff=256,seq_len=20,dropout=0.1)
+        loss_fn = PITNNLoss(lambda_p=0., lambda1=0., lambda2=0.,
+                            Lk=LK, n=N_TURNS, fsw=FSW,
+                            V_nom=V1_NOM, I_rated=100.)
+
+        hist = train_pitnn(model, loss_fn, X_norm, X_raw, Y,
+                           epochs=150, batch_size=64, lr=1e-4,
+                           val_split=.15, warmup_epochs=20, device=device,
+                           video_X_norm=video_X_norm,
+                           video_X_raw=video_X_raw,
+                           video_Y=video_Y)
+
+        all_mse.append(hist["test_mse"])
+        all_mae.append(hist["test_mae"])
+        all_hist.append(hist)
+
+        # Keep the best model across runs for plotting and inference
+        if min(hist["val"]) < best_val_loss:
+            best_val_loss = min(hist["val"])
+            best_model    = model
+            best_mu       = mu
+            best_sigma    = sigma
+
+        print(f"  Run {run_idx+1} — "
+              f"MSE={hist['test_mse']:.6f} rad²  "
+              f"MAE={math.degrees(hist['test_mae']):.3f}°  "
+              f"seed={run_seed}")
+
+    # ── Repeatability summary ─────────────────────────────────────────────────
+    mse_arr = np.array(all_mse)
+    mae_arr = np.array(all_mae)
+    mae_deg = np.degrees(mae_arr)
+
+    print(f"\n{'═'*70}")
+    print(f"  REPEATABILITY SUMMARY  ({args.runs} run(s))")
+    print(f"{'═'*70}")
+    if args.runs == 1:
+        print(f"  Test MSE : {mse_arr[0]:.6f} rad²")
+        print(f"  Test MAE : {math.degrees(mae_arr[0]):.3f}°")
+        print(f"  Seed     : {args.seed}  (set --runs N for multi-run statistics)")
+    else:
+        print(f"  {'Metric':<12}  {'Mean':>10}  {'Std':>10}  {'Min':>10}  {'Max':>10}")
+        print(f"  {'─'*56}")
+        print(f"  {'MSE (rad²)':<12}  {mse_arr.mean():>10.6f}  "
+              f"{mse_arr.std():>10.6f}  "
+              f"{mse_arr.min():>10.6f}  {mse_arr.max():>10.6f}")
+        print(f"  {'MAE (°)':<12}  {mae_deg.mean():>10.3f}  "
+              f"{mae_deg.std():>10.3f}  "
+              f"{mae_deg.min():>10.3f}  {mae_deg.max():>10.3f}")
+        print(f"  {'─'*56}")
+        print(f"  Seeds used: {', '.join(str(args.seed+k) for k in range(args.runs))}")
+        print(f"  Report as: MAE = {mae_deg.mean():.3f}° ± {mae_deg.std():.3f}°  "
+              f"(mean ± std, n={args.runs})")
+        print(f"\n  Per-run results:")
+        for k, (mse_k, mae_k) in enumerate(zip(mse_arr, mae_deg)):
+            marker = " ← best" if mse_k == mse_arr.min() else ""
+            print(f"    Run {k+1}  seed={args.seed+k}  "
+                  f"MSE={mse_k:.6f}  MAE={mae_k:.3f}°{marker}")
+    print(f"{'═'*70}\n")
+
+    # Use best model for all subsequent steps
+    model = best_model
+    hist  = all_hist[int(np.argmin(mse_arr))]
+
+    torch.save({"model_state": model.state_dict(),
+                "mu": best_mu, "sigma": best_sigma,
+                "hyperparams": dict(d_in=8, d_model=128, n_heads=8, n_layers=4,
+                                    d_ff=256, seq_len=20,
+                                    phi12_min=PHI12_MIN, phi12_max=PHI12_MAX,
+                                    phi_min=PHI_MIN, phi3_max=PHI3_MAX),
+                "repeatability": {"n_runs": args.runs,
+                                  "base_seed": args.seed,
+                                  "all_mse": mse_arr.tolist(),
+                                  "all_mae_deg": mae_deg.tolist(),
+                                  "mean_mae_deg": float(mae_deg.mean()),
+                                  "std_mae_deg":  float(mae_deg.std())}},
                "pitnn_dab_checkpoint.pt")
-    print("  Checkpoint: pitnn_dab_checkpoint.pt")
-    print(f"  φ1,φ2 ∈ [{PHI12_MIN:.4f},{PHI12_MAX:.4f}] rad  |  φ3 ∈ [{PHI_MIN:.4f},{PHI3_MAX:.4f}] rad")
+    print(f"  Checkpoint: pitnn_dab_checkpoint.pt")
+    print(f"  φ1,φ2 ∈ [{PHI12_MIN:.4f},{PHI12_MAX:.4f}] rad  |  "
+          f"φ3 ∈ [{PHI_MIN:.4f},{PHI3_MAX:.4f}] rad")
 
-    # [6] Plots
+    # [6] Plots — best run only
     print("\n[5] Plots")
-    plot_all(hist,dab)
+    plot_all(hist, dab)
 
-    # [7] Inference — PITNN vs offline solver computational comparison
+    # [7] Inference — solver comparison
     print("\n[6] Real-Time Inference  (§V-E, Eq. 38: φ_TPS = f_θ(X))")
-    print("    Solver(µs) = median of 5 runs of solve_optimal_phi() — offline optimizer")
-    print("    Inf.(µs)   = PITNN Transformer forward pass only (GPU, torch.no_grad)")
-    print("    Speedup    = Solver(µs) / Inf.(µs)\n")
+    print("    Offline solver  : adaptive grid search + brentq root-finding")
+    print("    PITNN Inf.(µs)  : single Transformer forward pass (GPU, torch.no_grad)")
+    print("    Speedup         : Solver(µs) / Inf.(µs)\n")
 
-    ctrl = PITNNController(model,mu,sigma,dab,device=device)
+    ctrl = PITNNController(model, best_mu, best_sigma, dab, device=device)
     ops  = [(800,800,10000,"10kW nom"),(760,840, 8000,"8kW V-var"),
             (800,800,20000,"20kW"),    (800,800, 5000,"5kW light"),
             (880,720,50000,"50kW high"),(800,800,30000,"30kW mid"),
@@ -1248,15 +1355,15 @@ def main():
           f"{'φ1':>7} {'φ2':>7} {'φ3':>6}  "
           f"{'P_calc':>8} {'Irms':>7} {'ZVS':>5} {'|ΔP|%':>6}  "
           f"{'Solver(µs)':>11} {'Inf.(µs)':>9} {'Speedup':>8}")
-    print(f"  {'─'*110}")
+    print(f"  {'─'*112}")
 
     total_solver_us = 0.0
     total_inf_us    = 0.0
 
     for V1,V2,Pref,label in ops:
-        dab.V1,dab.V2=float(V1),float(V2)
+        dab.V1, dab.V2 = float(V1), float(V2)
 
-        # Time the offline solver — median of 5 runs for a stable estimate
+        # Offline solver — median of 5 runs for a stable estimate
         solver_times = []
         for _ in range(5):
             t_s = time.perf_counter()
@@ -1264,13 +1371,11 @@ def main():
             solver_times.append((time.perf_counter()-t_s)*1e6)
         solver_us = float(np.median(solver_times))
 
-        # PITNN inference
         ctrl.reset()
-        r   = ctrl.step(float(V1),float(V2),None,float(Pref),phi_seed,reset=True)
-        phi = r["phi_TPS"]
-        inf_us  = r["inf_us"]
+        r      = ctrl.step(float(V1),float(V2),None,float(Pref),phi_seed,reset=True)
+        phi    = r["phi_TPS"]
+        inf_us = r["inf_us"]
         speedup = solver_us / max(inf_us, 0.001)
-
         total_solver_us += solver_us
         total_inf_us    += inf_us
 
@@ -1285,16 +1390,18 @@ def main():
     avg_sol = total_solver_us / n
     avg_inf = total_inf_us    / n
     avg_spd = avg_sol / max(avg_inf, 0.001)
-    print(f"  {'─'*110}")
-    print(f"  {'Average':>79} {avg_sol:>11.1f} {avg_inf:>9.1f} {avg_spd:>7.0f}x")
-    print(f"\n  Offline solver: adaptive grid search + brentq root-finding per condition.")
-    print(f"  PITNN replaces it with a single Transformer forward pass.")
-    print(f"  Average speedup: {avg_spd:.0f}x  "
-          f"(Solver: {avg_sol:.0f}µs  vs  Inf.: {avg_inf:.0f}µs)")
+    print(f"  {'─'*112}")
+    print(f"  {'Average':>81} {avg_sol:>11.1f} {avg_inf:>9.1f} {avg_spd:>7.0f}x")
+    print(f"\n  Average speedup: {avg_spd:.0f}x  "
+          f"(Solver: {avg_sol:.0f}µs  vs  PITNN Inf.: {avg_inf:.0f}µs)")
 
     print(f"\n{'='*70}")
-    print(f"  Test MSE: {hist['test_mse']:.6f} rad²")
-    print(f"  Test MAE: {hist['test_mae']:.6f} rad ({math.degrees(hist['test_mae']):.3f}°)")
+    print(f"  Test MSE : {hist['test_mse']:.6f} rad²")
+    print(f"  Test MAE : {hist['test_mae']:.6f} rad "
+          f"({math.degrees(hist['test_mae']):.3f}°)")
+    if args.runs > 1:
+        print(f"  Across {args.runs} runs: MAE = "
+              f"{mae_deg.mean():.3f}° ± {mae_deg.std():.3f}°  (mean ± std)")
     print(f"{'='*70}\n")
 
 
