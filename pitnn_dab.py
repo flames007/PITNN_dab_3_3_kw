@@ -46,6 +46,10 @@ High-power configuration (10kW–80kW):
     phi1 ∈ [PHI12_MIN, PHI12_MAX] rad  (primary inner duty)
     phi2 ∈ [PHI12_MIN, PHI12_MAX] rad  (secondary inner duty)
     phi3 ∈ [PHI_MIN,   PHI3_MAX]  rad  (external phase shift)
+
+Copyright (c) 2026 Chukwuemeka Nzeadibe
+Mississippi State University — All Rights Reserved
+=====================================================================
 """
 
 import math, time, warnings, argparse
