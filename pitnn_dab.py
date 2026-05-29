@@ -1059,10 +1059,12 @@ def plot_all(hist,dab):
     })
 
     wave_cases = [
-        ("low_power",  [PI*0.95, PI*0.95, 0.10]),
-        ("mid_power",  [PI*0.95, PI*0.95, 0.34]),
-        ("high_power", [PI*0.95, PI*0.95, 0.63]),
-        ("off_nominal",[2.8274,  2.8274,  0.80]),
+        # (filename_suffix, [phi1, phi2, phi3])
+        # Angles chosen to produce powers representative of the 3.3kW converter
+        ("light_load",   [PI*0.95, PI*0.95, 0.10]),   # ≈ 500W   light load
+        ("half_load",    [PI*0.95, PI*0.95, 0.45]),   # ≈ 1.65kW half rated
+        ("rated_load",   [PI*0.90, PI*0.90, 0.80]),   # ≈ 3.0kW  near rated
+        ("asym_voltage", [PI*0.85, PI*0.85, 0.65]),   # ≈ 2.5kW  V1≠V2 region
     ]
 
     for case_name, phi_ex in wave_cases:
@@ -1301,8 +1303,12 @@ def main():
     print("\n[5] Plots")
     plot_all(hist,dab)
 
-    # [7] Inference
+    # [7] Inference — PITNN vs offline solver
     print("\n[6] Real-Time Inference  (§V-E, Eq. 38: φ_TPS = f_θ(X))")
+    print("    Offline solver  : adaptive grid search + brentq root-finding")
+    print("    PITNN Inf.(µs)  : single Transformer forward pass (GPU, torch.no_grad)")
+    print("    Speedup         : Solver(µs) / Inf.(µs)\n")
+
     ctrl = PITNNController(model,mu,sigma,dab,device=device)
     ops  = [(400,250,3300,"3.3kW nom"), (380,240,2000,"2kW V-var"),
             (400,250,1650,"1.65kW"),    (400,250, 500,"0.5kW light"),
@@ -1311,19 +1317,46 @@ def main():
 
     print(f"\n  {'Condition':<12} {'V1':>5} {'V2':>5} {'Pref':>6}  "
           f"{'φ1':>7} {'φ2':>7} {'φ3':>6}  "
-          f"{'P_calc':>8} {'Irms':>7} {'ZVS':>5} {'|ΔP|%':>7} {'t(µs)':>7}")
-    print(f"  {'─'*92}")
+          f"{'P_calc':>8} {'Irms':>7} {'ZVS':>5} {'|ΔP|%':>6}  "
+          f"{'Solver(µs)':>11} {'Inf.(µs)':>9} {'Speedup':>8}")
+    print(f"  {'─'*112}")
+
+    total_solver_us = total_inf_us = 0.0
+
     for V1,V2,Pref,label in ops:
+        dab.V1,dab.V2 = float(V1),float(V2)
+
+        # Solver — median of 5 runs for a stable estimate
+        stimes = []
+        for _ in range(5):
+            t_s = time.perf_counter()
+            phi_seed = dab.solve_optimal_phi(float(Pref))
+            stimes.append((time.perf_counter()-t_s)*1e6)
+        solver_us = float(np.median(stimes))
+
         ctrl.reset()
-        dab.V1,dab.V2=float(V1),float(V2)
-        phi_seed=dab.solve_optimal_phi(float(Pref))
-        r=ctrl.step(float(V1),float(V2),None,float(Pref),phi_seed,reset=True)
-        phi=r["phi_TPS"]
+        r       = ctrl.step(float(V1),float(V2),None,float(Pref),phi_seed,reset=True)
+        phi     = r["phi_TPS"]
+        inf_us  = r["inf_us"]
+        speedup = solver_us / max(inf_us, 0.001)
+        total_solver_us += solver_us
+        total_inf_us    += inf_us
+
         print(f"  {label:<12} {V1:>5} {V2:>5} {Pref:>6}  "
               f"{phi[0]:>7.4f} {phi[1]:>7.4f} {phi[2]:>6.4f}  "
               f"{r['P_calc']:>8.1f} {r['Irms']:>7.4f} "
-              f"{'YES' if r['zvs_ok'] else 'NO':>5}  "
-              f"{r['P_err_pct']:>6.1f}% {r['inf_us']:>7.1f}")
+              f"{'YES' if r['zvs_ok'] else 'NO':>5} "
+              f"{r['P_err_pct']:>6.1f}%  "
+              f"{solver_us:>11.1f} {inf_us:>9.1f} {speedup:>7.0f}x")
+
+    n       = len(ops)
+    avg_sol = total_solver_us / n
+    avg_inf = total_inf_us    / n
+    avg_spd = avg_sol / max(avg_inf, 0.001)
+    print(f"  {'─'*112}")
+    print(f"  {'Average':>81} {avg_sol:>11.1f} {avg_inf:>9.1f} {avg_spd:>7.0f}x")
+    print(f"\n  Average speedup: {avg_spd:.0f}x  "
+          f"(Solver: {avg_sol:.0f}µs  vs  PITNN Inf.: {avg_inf:.0f}µs)")
 
     print(f"\n{'='*70}")
     print(f"  Test MSE: {hist['test_mse']:.6f} rad²")
