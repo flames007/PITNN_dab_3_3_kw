@@ -771,7 +771,7 @@ class PITNNLoss(nn.Module):
 
 def generate_dataset(n_samples=10000,seq_len=20,
                      V1_range=(360.,440.),V2_range=(220.,280.),
-                     Pref_range=(500.,4500.),seed=42):
+                     Pref_range=(500.,3300.),seed=42):
     """
     Generate (X, Y) pairs where Y = [phi1_opt, phi2_opt, phi3_opt].
     All three angles come from solve_optimal_phi() which searches across
@@ -1162,7 +1162,7 @@ def main():
     print(f"  V1={V1_NOM:.0f}V  V2={V2_NOM:.0f}V  n={N_TURNS:.1f}  "
           f"Lk={LK*1e6:.0f}µH  fsw={FSW/1e3:.0f}kHz\n"
           f"  P_max≈{dab.p_max()/1000:.1f}kW  P_rated={P_RATED/1000:.1f}kW  "
-          f"Operating range: 0.5–4.5kW\n")
+          f"Operating range: 0.5–3.3kW\n")
     print(f"  {'φ1':>7} {'φ2':>7} {'φ3':>7}  {'P(W)':>9}  {'Irms':>8}  {'ZVS':>5}  {'Mode':>5}")
     print(f"  {'─'*60}")
     for p1,p2,p3 in [(PI*.95,PI*.95,.10),(PI*.95,PI*.95,.30),
@@ -1176,7 +1176,7 @@ def main():
     rng_chk=np.random.default_rng(0)
     print(f"  {'Pref':>7} {'φ1':>7} {'φ2':>7} {'φ3':>7} {'P_calc':>9} {'err%':>6} {'Irms':>7}")
     print(f"  {'─'*58}")
-    for Pref in [500,1000,1650,2000,2500,3300,4000,4500]:
+    for Pref in [500,1000,1650,2000,2500,3000,3300]:
         phi=dab.solve_optimal_phi(float(Pref),rng=rng_chk)
         P=dab.compute_power(*phi); Ir=dab.compute_irms(*phi)
         err=abs(P-Pref)/max(Pref,1)*100
@@ -1219,7 +1219,7 @@ def main():
     print(f"  φ1 output     : sigmoid → [{PHI12_MIN:.4f}, {PHI12_MAX:.4f}] rad")
     print(f"  φ2 output     : sigmoid → [{PHI12_MIN:.4f}, {PHI12_MAX:.4f}] rad")
     print(f"  φ3 output     : sigmoid → [{PHI_MIN:.4f},   {PHI3_MAX:.4f}]  rad")
-    print(f"  Power range   : 0.5kW–4.5kW  (P_rated={P_RATED/1000:.1f}kW)")
+    print(f"  Power range   : 0.5kW–3.3kW  (P_rated={P_RATED/1000:.1f}kW)")
     print(f"  Base seed     : {args.seed}  |  Training runs: {args.runs}")
 
     # [5] Multi-run training
@@ -1306,7 +1306,7 @@ def main():
     ctrl = PITNNController(model,mu,sigma,dab,device=device)
     ops  = [(400,250,3300,"3.3kW nom"), (380,240,2000,"2kW V-var"),
             (400,250,1650,"1.65kW"),    (400,250, 500,"0.5kW light"),
-            (420,260,4000,"4kW high"),  (400,250,2500,"2.5kW mid"),
+            (400,250,3000,"3kW high"),  (400,250,2500,"2.5kW mid"),
             (410,245,3000,"3kW asym"),  (390,260,1000,"1kW off-V")]
 
     print(f"\n  {'Condition':<12} {'V1':>5} {'V2':>5} {'Pref':>6}  "

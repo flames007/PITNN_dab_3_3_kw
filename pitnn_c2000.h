@@ -70,7 +70,7 @@
 #define PITNN_PI_KP         10.0f       /* Proportional gain (scale to 3.3kW)*/
 #define PITNN_PI_KI         100.0f      /* Integral gain                     */
 #define PITNN_PI_PREF_MIN   500.0f      /* Minimum power reference       (W) */
-#define PITNN_PI_PREF_MAX   4500.0f     /* Maximum power reference       (W) */
+#define PITNN_PI_PREF_MAX   3300.0f     /* Maximum power reference       (W) */
 #define PITNN_VREF          250.0f      /* Output voltage setpoint       (V) */
 
 /* ── END OF USER-CONFIGURABLE SECTION ────────────────────────────────────── */
