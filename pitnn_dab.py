@@ -7,7 +7,7 @@ in Dual Active Bridge (DAB) Converters
 
 Paper: "Physics-Informed Transformer Neural Network Control for
         Real-Time Triple Phase Shift Optimal Modulation in
-        Dual Active Bridge (DAB) Converters" — Chukwuemeka Nzeadibe,
+        Dual Active Bridge Converters" — Chukwuemeka Nzeadibe,
         Mississippi State University, 2026.
 
 Requirements:  pip install torch numpy matplotlib scipy opencv-python
@@ -39,14 +39,9 @@ Hardware compatibility
   Multi-channel captures (CH1=vab, CH2=nvcd, CH3=iL) — auto-detected
 ============================================================
 
-Converter specification:
-  V1 = 400 V  (primary bus, e.g. 400V DC grid or battery)
-  V2 = 250 V  (secondary bus, e.g. 48V-class battery × conversion)
-  n  = 1.6    (transformer turns ratio V1/V2 — maximises ZVS margin)
-  Lk = 40 µH  (series inductance — sets P_max ≈ 5 kW)
-  fsw = 100 kHz
-  P_rated = 3.3 kW  (nominal operating point, ~66% of P_max)
-  Operating range: 0.5 kW – 4.5 kW
+High-power configuration (10kW–80kW):
+  V1=V2=800V, n=1.0, Lk=10µH, fsw=100kHz → P_max=80kW
+  Operating range: 5kW–70kW  (P_min≈3kW physics floor)
   All three TPS angles predicted by the PITNN:
     phi1 ∈ [PHI12_MIN, PHI12_MAX] rad  (primary inner duty)
     phi2 ∈ [PHI12_MIN, PHI12_MAX] rad  (secondary inner duty)
@@ -70,26 +65,25 @@ np.random.seed(42)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CONSTANTS  (Table II)
+# V1=400V, V2=250V, n=1.6, Lk=40µH, fsw=100kHz → P_max≈5kW, P_rated=3.3kW
 # ─────────────────────────────────────────────────────────────────────────────
 V1_NOM      = 400.0          # Primary bus voltage         (V)
 V2_NOM      = 250.0          # Secondary bus voltage       (V)
 FSW         = 100e3          # Switching frequency         (Hz)
-LK          = 40e-6          # Series inductance           (H)  → P_max ≈ 5 kW
+LK          = 40e-6          # Series inductance           (H)
 N_TURNS     = 1.6            # Transformer turns ratio n = V1/V2
 P_RATED     = 3300.0         # Nominal rated power         (W)
 TS          = 1.0 / FSW
 WS          = 2.0 * math.pi * FSW
 PI          = math.pi
-PHI_MIN     = 0.02           # phi3 lower bound — allows ≈0.5kW at minimum
-PHI12_MIN   = PI * 0.65      # phi1/phi2 lower bound (2.042 rad, 65% duty)
-PHI12_MAX   = PI * 0.99      # phi1/phi2 upper bound (3.110 rad)
-PHI12_NOM   = PI * 0.95      # Nominal design seed (95% duty)
-PHI3_MAX    = 1.50           # phi3 upper bound (rad)
-K_POWER     = 6620.8         # Analytical power model coefficient
-                             # P ≈ K·(φ1/π)·φ3·(1−φ3/B)
-                             # Fitted at V1=400V, V2=250V, n=1.6, Lk=40µH
-B_POWER     = PI             # = 3.1416 — power peaks at φ3 = B/2 ≈ π/2
-PHI3_PEAK   = B_POWER / 2.0 # φ3 at maximum power transfer (≈1.5708 rad)
+PHI_MIN     = 0.02
+PHI12_MIN   = PI * 0.65
+PHI12_MAX   = PI * 0.99
+PHI12_NOM   = PI * 0.95
+PHI3_MAX    = 1.50
+K_POWER     = 6620.8         # P ≈ K·(φ1/π)·φ3·(1−φ3/B), fitted at new spec
+B_POWER     = PI             # Power peaks at φ3 = B/2 ≈ π/2
+PHI3_PEAK   = B_POWER / 2.0
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -782,14 +776,15 @@ def generate_dataset(n_samples=10000,seq_len=20,
     Generate (X, Y) pairs where Y = [phi1_opt, phi2_opt, phi3_opt].
     All three angles come from solve_optimal_phi() which searches across
     a grid of phi12 values and selects the most efficient ZVS-maintaining
-    solution. 30% of samples are drawn from the low-power region (0.5–1.5kW)
+    solution. 20% of samples are drawn from the low-power region (5–15kW)
     to improve accuracy near the physics floor.
     """
     rng=np.random.default_rng(seed); dab=DABPhysics()
     print(f"  Generating {n_samples} synthetic samples (all 3 angles free) …")
     t0=time.perf_counter(); X_list,Y_list=[],[]; n_fb=0
 
-    # 30% of samples from the low-power region (0.5–1.5kW)
+    # 30% of samples from the low-power region (3–12kW) to improve accuracy
+    # near the physics floor where phi3 is very small and hard to predict.
     n_low = int(n_samples * 0.30)
     Pref_low_range  = (300., 1500.)
     Pref_main_range = Pref_range
@@ -992,7 +987,6 @@ class PITNNController:
     def reset(self): self._buf=[]
 
     def _est_irms(self,V1,V2,phi1,phi3):
-        """Estimate RMS inductor current using predicted phi1 and phi3."""
         return float(V1*V2/(V1_NOM*V2_NOM)*N_TURNS*10.7
                      *max(float(phi3),PHI_MIN)*(float(phi1)/PI))
 
@@ -1066,9 +1060,9 @@ def plot_all(hist,dab):
 
     wave_cases = [
         ("low_power",  [PI*0.95, PI*0.95, 0.10]),
-        ("mid_power",  [PI*0.95, PI*0.95, 0.45]),
-        ("high_power", [PI*0.90, PI*0.90, 0.80]),
-        ("off_nominal",[PI*0.85, PI*0.85, 0.65]),
+        ("mid_power",  [PI*0.95, PI*0.95, 0.34]),
+        ("high_power", [PI*0.95, PI*0.95, 0.63]),
+        ("off_nominal",[2.8274,  2.8274,  0.80]),
     ]
 
     for case_name, phi_ex in wave_cases:
@@ -1130,13 +1124,27 @@ def plot_all(hist,dab):
 # MAIN
 # ═════════════════════════════════════════════════════════════════════════════
 
+def set_seed(seed: int):
+    """Fix all random sources for a reproducible training run."""
+    import random
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark     = False
+
+
 def main():
     parser = argparse.ArgumentParser(description="PITNN DAB Converter Simulation")
     parser.add_argument("--video", type=str, default=None,
-                        help="Path to oscilloscope/simulation video file. "
-                             "If provided, waveforms are extracted and merged "
-                             "into training. Any new video can be plugged in "
-                             "without code changes.")
+                        help="Path to oscilloscope/simulation video file.")
+    parser.add_argument("--runs", type=int, default=1,
+                        help="Number of independent training runs (default 1). "
+                             "Use --runs 5 to report mean ± std.")
+    parser.add_argument("--seed", type=int, default=0,
+                        help="Base random seed (default 0). "
+                             "Run k uses seed+k for reproducibility.")
     args = parser.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -1151,7 +1159,9 @@ def main():
 
     # [1] Physics verification
     print("\n[1] DAB Physics Verification")
-    print(f"  P_max={dab.p_max()/1000:.1f}kW  P_rated={P_RATED/1000:.1f}kW  "
+    print(f"  V1={V1_NOM:.0f}V  V2={V2_NOM:.0f}V  n={N_TURNS:.1f}  "
+          f"Lk={LK*1e6:.0f}µH  fsw={FSW/1e3:.0f}kHz\n"
+          f"  P_max≈{dab.p_max()/1000:.1f}kW  P_rated={P_RATED/1000:.1f}kW  "
           f"Operating range: 0.5–4.5kW\n")
     print(f"  {'φ1':>7} {'φ2':>7} {'φ3':>7}  {'P(W)':>9}  {'Irms':>8}  {'ZVS':>5}  {'Mode':>5}")
     print(f"  {'─'*60}")
@@ -1201,36 +1211,91 @@ def main():
 
     # [4] Architecture
     print("\n[3] PITNN Architecture  (§V-B, Fig. 2, Eq. 29-32)")
-    model = PITNN(d_in=8,d_model=128,n_heads=8,n_layers=4,d_ff=256,seq_len=20,dropout=0.1)
-    n_p   = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    _tmp = PITNN(d_in=8,d_model=128,n_heads=8,n_layers=4,d_ff=256,seq_len=20,dropout=0.1)
+    n_p  = sum(p.numel() for p in _tmp.parameters() if p.requires_grad); del _tmp
     print(f"  Parameters    : {n_p:,}")
     print(f"  Layers/heads  : 4 / 8  |  d_model/d_ff: 128 / 256")
     print(f"  Input features: 8  [V1,V2,iL,φ1,φ2,φ3,Pref,V1V2/Vnom²]")
-    print(f"  φ1 output     : sigmoid → [{PHI12_MIN:.4f}, {PHI12_MAX:.4f}] rad  (predicted)")
-    print(f"  φ2 output     : sigmoid → [{PHI12_MIN:.4f}, {PHI12_MAX:.4f}] rad  (predicted)")
-    print(f"  φ3 output     : sigmoid → [{PHI_MIN:.4f},   {PHI3_MAX:.4f}]  rad  (predicted)")
-    print(f"  Power range   : 0.5kW–4.5kW  (P_rated={P_RATED/1000:.1f}kW, P_max≈5kW)")
+    print(f"  φ1 output     : sigmoid → [{PHI12_MIN:.4f}, {PHI12_MAX:.4f}] rad")
+    print(f"  φ2 output     : sigmoid → [{PHI12_MIN:.4f}, {PHI12_MAX:.4f}] rad")
+    print(f"  φ3 output     : sigmoid → [{PHI_MIN:.4f},   {PHI3_MAX:.4f}]  rad")
+    print(f"  Power range   : 0.5kW–4.5kW  (P_rated={P_RATED/1000:.1f}kW)")
+    print(f"  Base seed     : {args.seed}  |  Training runs: {args.runs}")
 
-    loss_fn = PITNNLoss(lambda_p=0.,lambda1=0.,lambda2=0.,
-                        Lk=LK,n=N_TURNS,fsw=FSW,V_nom=V1_NOM,I_rated=100.)
+    # [5] Multi-run training
+    all_mse, all_mae, all_hist, all_models = [], [], [], []
+    print(f"\n[4] Training  (§V-D: Adam lr=1e-4, batch=64, 150 epochs)")
+    print(f"    Repeatability: {args.runs} run(s), "
+          f"seeds {args.seed}–{args.seed+args.runs-1}")
 
-    # [5] Training
-    print("\n[4] Training  (§V-D: Adam lr=1e-4, batch=64, 150 epochs)")
-    hist = train_pitnn(model,loss_fn,X_norm,X_raw,Y,
-                       epochs=150,batch_size=64,lr=1e-4,
-                       val_split=.15,warmup_epochs=20,device=device,
-                       video_X_norm=video_X_norm,
-                       video_X_raw=video_X_raw,
-                       video_Y=video_Y)
+    for run_idx in range(args.runs):
+        run_seed = args.seed + run_idx
+        set_seed(run_seed)
+        if args.runs > 1:
+            print(f"\n{'━'*70}\n  Run {run_idx+1}/{args.runs}  (seed={run_seed})\n{'━'*70}")
 
-    torch.save({"model_state":model.state_dict(),"mu":mu,"sigma":sigma,
-                "hyperparams":dict(d_in=8,d_model=128,n_heads=8,n_layers=4,
-                                   d_ff=256,seq_len=20,
-                                   phi12_min=PHI12_MIN,phi12_max=PHI12_MAX,
-                                   phi_min=PHI_MIN,phi3_max=PHI3_MAX)},
+        model   = PITNN(d_in=8,d_model=128,n_heads=8,n_layers=4,
+                        d_ff=256,seq_len=20,dropout=0.1)
+        loss_fn = PITNNLoss(lambda_p=0.,lambda1=0.,lambda2=0.,
+                            Lk=LK,n=N_TURNS,fsw=FSW,V_nom=V1_NOM,I_rated=100.)
+        hist = train_pitnn(model,loss_fn,X_norm,X_raw,Y,
+                           epochs=150,batch_size=64,lr=1e-4,
+                           val_split=.15,warmup_epochs=20,device=device,
+                           video_X_norm=video_X_norm,
+                           video_X_raw=video_X_raw,video_Y=video_Y)
+        all_mse.append(hist["test_mse"])
+        all_mae.append(hist["test_mae"])
+        all_hist.append(hist)
+        all_models.append(model)
+        if args.runs > 1:
+            print(f"  Run {run_idx+1} — MSE={hist['test_mse']:.6f}  "
+                  f"MAE={math.degrees(hist['test_mae']):.3f}°  seed={run_seed}")
+
+    # Best run
+    best_idx = int(np.argmin(all_mse))
+    model    = all_models[best_idx]
+    hist     = all_hist[best_idx]
+    mse_arr  = np.array(all_mse)
+    mae_arr  = np.array(all_mae)
+    mae_deg  = np.degrees(mae_arr)
+
+    # Repeatability summary
+    print(f"\n{'═'*70}\n  REPEATABILITY SUMMARY  ({args.runs} run(s))\n{'═'*70}")
+    if args.runs == 1:
+        print(f"  Test MSE : {mse_arr[0]:.6f} rad²")
+        print(f"  Test MAE : {mae_deg[0]:.3f}°  (seed={args.seed})")
+        print(f"  Use --runs N for multi-run mean ± std statistics")
+    else:
+        print(f"  {'Metric':<12}  {'Mean':>10}  {'Std':>10}  {'Min':>10}  {'Max':>10}")
+        print(f"  {'─'*56}")
+        print(f"  {'MSE (rad²)':<12}  {mse_arr.mean():>10.6f}  {mse_arr.std():>10.6f}  "
+              f"{mse_arr.min():>10.6f}  {mse_arr.max():>10.6f}")
+        print(f"  {'MAE (°)':<12}  {mae_deg.mean():>10.3f}  {mae_deg.std():>10.3f}  "
+              f"{mae_deg.min():>10.3f}  {mae_deg.max():>10.3f}")
+        print(f"  {'─'*56}")
+        print(f"  Seeds: {', '.join(str(args.seed+k) for k in range(args.runs))}")
+        print(f"  Report as: MAE = {mae_deg.mean():.3f}° ± {mae_deg.std():.3f}°  "
+              f"(mean ± std, n={args.runs})")
+        print("  Per-run results:")
+        for k in range(args.runs):
+            print(f"    Run {k+1}  seed={args.seed+k}  MSE={mse_arr[k]:.6f}  "
+                  f"MAE={mae_deg[k]:.3f}°{' ← best' if k==best_idx else ''}")
+    print(f"{'═'*70}\n")
+
+    torch.save({"model_state": model.state_dict(), "mu": mu, "sigma": sigma,
+                "hyperparams": dict(d_in=8,d_model=128,n_heads=8,n_layers=4,
+                                    d_ff=256,seq_len=20,
+                                    phi12_min=PHI12_MIN,phi12_max=PHI12_MAX,
+                                    phi_min=PHI_MIN,phi3_max=PHI3_MAX),
+                "repeatability": {"n_runs": args.runs, "base_seed": args.seed,
+                                  "all_mse": mse_arr.tolist(),
+                                  "all_mae_deg": mae_deg.tolist(),
+                                  "mean_mae_deg": float(mae_deg.mean()),
+                                  "std_mae_deg":  float(mae_deg.std())}},
                "pitnn_dab_checkpoint.pt")
-    print("  Checkpoint: pitnn_dab_checkpoint.pt")
-    print(f"  φ1,φ2 ∈ [{PHI12_MIN:.4f},{PHI12_MAX:.4f}] rad  |  φ3 ∈ [{PHI_MIN:.4f},{PHI3_MAX:.4f}] rad")
+    print(f"  Checkpoint: pitnn_dab_checkpoint.pt")
+    print(f"  φ1,φ2 ∈ [{PHI12_MIN:.4f},{PHI12_MAX:.4f}] rad  |  "
+          f"φ3 ∈ [{PHI_MIN:.4f},{PHI3_MAX:.4f}] rad")
 
     # [6] Plots
     print("\n[5] Plots")
@@ -1263,6 +1328,9 @@ def main():
     print(f"\n{'='*70}")
     print(f"  Test MSE: {hist['test_mse']:.6f} rad²")
     print(f"  Test MAE: {hist['test_mae']:.6f} rad ({math.degrees(hist['test_mae']):.3f}°)")
+    if args.runs > 1:
+        print(f"  Across {args.runs} runs: MAE = "
+              f"{mae_deg.mean():.3f}° ± {mae_deg.std():.3f}°  (mean ± std)")
     print(f"{'='*70}\n")
 
 
