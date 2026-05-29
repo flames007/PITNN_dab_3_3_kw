@@ -438,7 +438,6 @@ def train_model(
         "hist_val"     : hist_val,
         "Y_test"       : Yte.cpu().numpy(),
         "Y_pred"       : pt.cpu().numpy(),
-        "_model"       : model,   # kept for operating-range heatmaps
     }
 
 
@@ -787,159 +786,7 @@ def plot_video_comparison(results_syn, results_vid,
 # Returns a fresh instance of every model variant for one training pass.
 # ═════════════════════════════════════════════════════════════════════════════
 
-def plot_ablation_heatmaps(results, mu, sigma, device, title="Synthetic Only",
-                           save_path="pitnn_ablation_heatmaps.png"):
-    """
-    Full operating-range heatmaps for every trained ablation variant.
-
-    Layout: one row per model variant, four columns:
-      (a) Power error        |ΔP| / P_ref  (%)
-      (b) Inductor RMS       I_rms          (A)
-      (c) ZVS violation      0 = OK, 1 = lost
-      (d) TPS prediction err mean |φ_PITNN − φ_solver|  (°)
-
-    Grid: V2 ∈ [700, 900] V  (V1 = 800 V fixed)
-          Pref ∈ [5, 70] kW
-          Resolution: 25 × 25 = 625 points per variant
-
-    Each grid point:
-      1. solve_optimal_phi()  → solver reference angles
-      2. model(x_norm)        → PITNN predicted angles
-      3. DABPhysics.compute_* → physics quantities from predicted angles
-    """
-    from mpl_toolkits.axes_grid1 import make_axes_locatable
-    import torch.nn as nn
-
-    V1_FIXED  = 800.0
-    V2_vals   = np.linspace(700, 900, 25)
-    Pref_vals = np.linspace(5000, 70000, 25)
-    V2g, Pg   = np.meshgrid(V2_vals, Pref_vals)
-    extent    = [V2_vals[0], V2_vals[-1],
-                 Pref_vals[0]/1000, Pref_vals[-1]/1000]
-
-    mu_t    = torch.from_numpy(mu).float().to(device)
-    sigma_t = torch.from_numpy(sigma).float().to(device)
-    dab     = DABPhysics()
-    dab.V1  = V1_FIXED
-
-    n_variants = len(results)
-    fig, axes  = plt.subplots(n_variants, 4,
-                               figsize=(18, 3.8 * n_variants),
-                               squeeze=False)
-
-    fig.suptitle(
-        f"Ablation Study — Full Operating-Range Heatmaps  ({title})\n"
-        f"V1 = {V1_FIXED:.0f} V  |  V2 ∈ [700, 900] V  |  "
-        f"P_ref ∈ [5, 70] kW  |  Grid: 25×25",
-        fontsize=11, y=1.01
-    )
-
-    col_titles = [
-        "(a) Power Error\n|ΔP|/P_ref (%)",
-        "(b) Inductor RMS\nI_rms (A)",
-        "(c) ZVS Violation\n0=OK, 1=lost",
-        "(d) TPS Prediction Error\nmean|φ_PITNN−φ_solver| (°)",
-    ]
-    col_cmaps  = ["RdYlGn_r", "plasma", "RdYlGn_r", "YlOrRd"]
-    col_vlims  = [(0, 15),    (None, None), (0, 1),  (0, None)]
-
-    for row_idx, r in enumerate(results):
-        model_name = r["name"]
-        model      = r["_model"]   # stored by run_pass below
-        model.eval()
-
-        P_err_map   = np.full_like(V2g, np.nan)
-        Irms_map    = np.full_like(V2g, np.nan)
-        ZVS_map     = np.zeros_like(V2g)
-        phi_err_map = np.full_like(V2g, np.nan)
-
-        print(f"    [{row_idx+1}/{n_variants}] {model_name} ...")
-
-        with torch.no_grad():
-            for i in range(V2g.shape[0]):
-                for j in range(V2g.shape[1]):
-                    V2   = float(V2g[i, j])
-                    Pref = float(Pg[i, j])
-                    dab.V1, dab.V2 = V1_FIXED, V2
-
-                    try:
-                        phi_sol = dab.solve_optimal_phi(Pref)
-
-                        # Build normalised input: use nominal iL estimate,
-                        # previous phi = solver seed, v_ratio from V1/V2
-                        v_ratio  = V1_FIXED * V2 / (V1_NOM ** 2)
-                        iL_est   = v_ratio * 10.7 * float(phi_sol[2])
-                        feat = np.array([
-                            V1_FIXED, V2, iL_est,
-                            float(phi_sol[0]), float(phi_sol[1]),
-                            float(phi_sol[2]), Pref, v_ratio
-                        ], dtype=np.float32)
-                        feat_norm = ((feat - mu) / sigma).astype(np.float32)
-
-                        # Replicate across seq_len=20 (stationary context)
-                        x = torch.from_numpy(
-                            np.tile(feat_norm, (1, 20, 1))
-                        ).float().to(device)
-
-                        out     = model(x).squeeze().cpu().numpy()
-                        phi_pit = (float(out[0]), float(out[1]), float(out[2]))
-
-                        P_pit  = dab.compute_power(*phi_pit)
-                        Ir_pit = dab.compute_irms(*phi_pit)
-                        zvs_ok, _ = dab.check_zvs(*phi_pit)
-
-                        P_err_map[i, j]   = abs(P_pit - Pref) / max(Pref, 1) * 100
-                        Irms_map[i, j]    = Ir_pit
-                        ZVS_map[i, j]     = 0 if zvs_ok else 1
-                        phi_err_map[i, j] = float(np.degrees(np.mean(
-                            np.abs(np.array(phi_pit) - np.array(phi_sol)))))
-                    except Exception:
-                        pass
-
-        maps   = [P_err_map, Irms_map, ZVS_map, phi_err_map]
-        for col_idx, (data, cmap, vlim) in enumerate(
-                zip(maps, col_cmaps, col_vlims)):
-            ax  = axes[row_idx][col_idx]
-            vmin, vmax = vlim
-            im  = ax.imshow(data, origin="lower", extent=extent,
-                            aspect="auto", cmap=cmap,
-                            vmin=vmin, vmax=vmax)
-
-            # Colorbar
-            div = make_axes_locatable(ax)
-            cax = div.append_axes("right", size="5%", pad=0.06)
-            fig.colorbar(im, cax=cax).ax.tick_params(labelsize=7)
-
-            # ZVS boundary contour
-            if col_idx == 2:
-                ax.contour(V2g, Pg/1000, data,
-                           levels=[0.5], colors=["k"], linewidths=1.2)
-
-            # Nominal V2=V1 line
-            ax.axvline(800, color="white", lw=0.9, ls=":", alpha=0.7)
-
-            ax.set_xlabel("V2 (V)", fontsize=7)
-            ax.set_ylabel("P_ref (kW)", fontsize=7)
-            ax.tick_params(labelsize=6)
-
-            # Row label on first column only
-            if col_idx == 0:
-                ax.set_ylabel(f"{model_name}\nP_ref (kW)", fontsize=7,
-                              fontweight="bold")
-
-            # Column title on first row only
-            if row_idx == 0:
-                ax.set_title(col_titles[col_idx], fontsize=8)
-
-    plt.tight_layout()
-    plt.savefig(save_path, dpi=160, bbox_inches="tight")
-    plt.close()
-    print(f"  Saved: {save_path}")
-
-
-# ═════════════════════════════════════════════════════════════════════════════
-# MODEL REGISTRY
-# ═════════════════════════════════════════════════════════════════════════════
+def build_all_models():
     """Return a list of (model_instance, name, physics_loss, kwargs) tuples."""
     pitnn_kw = dict(d_in=8, d_model=128, n_heads=8, n_layers=4,
                     d_ff=256, seq_len=20, dropout=0.1)
@@ -965,41 +812,6 @@ def plot_ablation_heatmaps(results, mu, sigma, device, title="Synthetic Only",
         (PITNNPostLN(**pitnn_kw), "PITNN – Pre-LN",
          True, dict(lambda_p=1.0, lambda2=0.5)),
         # ── Full PITNN ──────────────────────────────────────────────────────
-        (PITNN(**pitnn_kw), "PITNN (full)",
-         True, dict(lambda_p=1.0, lambda2=0.5)),
-    ]
-
-
-# ═════════════════════════════════════════════════════════════════════════════
-# MODEL REGISTRY
-# ═════════════════════════════════════════════════════════════════════════════
-
-def build_all_models():
-    """Return a list of (model_instance, name, physics_loss, kwargs) tuples."""
-    pitnn_kw = dict(d_in=8, d_model=128, n_heads=8, n_layers=4,
-                    d_ff=256, seq_len=20, dropout=0.1)
-    return [
-        # ── Baselines ────────────────────────────────────────────────────────
-        (MLP(seq_len=20, n_feat=8, hidden=512, n_layers=4, dropout=0.1),
-         "MLP",  False, {}),
-        (LSTMModel(n_feat=8, hidden=256, n_layers=2, dropout=0.1),
-         "LSTM", False, {}),
-        (GRUModel(n_feat=8, hidden=256, n_layers=2, dropout=0.1),
-         "GRU",  False, {}),
-        # ── Ablations ────────────────────────────────────────────────────────
-        (PITNN(**pitnn_kw), "PITNN \u2013 LP",
-         True, dict(lambda_p=1.0, lambda2=0.5, no_lp=True)),
-        (PITNN(**pitnn_kw), "PITNN \u2013 LZVS",
-         True, dict(lambda_p=1.0, lambda2=0.5, no_lzvs=True)),
-        (PITNN(**pitnn_kw), "PITNN \u2013 Lsym",
-         True, dict(lambda_p=1.0, lambda2=0.5, no_lsym=True)),
-        (PITNN(**pitnn_kw), "PITNN \u2013 warmup",
-         True, dict(lambda_p=1.0, lambda2=0.5, no_warmup=True)),
-        (PITNNNoPE(**pitnn_kw),   "PITNN \u2013 PE",
-         True, dict(lambda_p=1.0, lambda2=0.5)),
-        (PITNNPostLN(**pitnn_kw), "PITNN \u2013 Pre-LN",
-         True, dict(lambda_p=1.0, lambda2=0.5)),
-        # ── Full PITNN ───────────────────────────────────────────────────────
         (PITNN(**pitnn_kw), "PITNN (full)",
          True, dict(lambda_p=1.0, lambda2=0.5)),
     ]
@@ -1053,7 +865,7 @@ def main():
                 args.video,
                 fsw_hardware = FSW,
                 V1_hardware  = V1_NOM,
-                V2_hardware  = V1_NOM,
+                V2_hardware  = V2_NOM,
                 verbose      = True,
             )
             extractor.plot_extraction("pitnn_ablation_video_extraction.png")
@@ -1123,13 +935,6 @@ def main():
                  train_path="pitnn_ablation_training.png",
                  angle_path="pitnn_ablation_perangle.png")
 
-    # Operating-range heatmaps for all variants (synthetic pass)
-    print("\n  Building operating-range heatmaps (25×25 grid × "
-          f"{len(results_syn)} variants) ...")
-    plot_ablation_heatmaps(results_syn, mu, sigma, device,
-                           title="Synthetic Only",
-                           save_path="pitnn_ablation_heatmaps.png")
-
     # ── [5] SYNTHETIC + VIDEO training pass (only if --video supplied) ────
     if args.video and video_X_norm is not None:
         # Use the same test set as the synthetic pass so results are
@@ -1170,12 +975,6 @@ def main():
                      angle_path="pitnn_ablation_video_perangle.png")
         plot_video_comparison(results_syn, results_vid)
 
-        # Operating-range heatmaps for video pass
-        print("\n  Building operating-range heatmaps (video pass) ...")
-        plot_ablation_heatmaps(results_vid, mu, sigma, device,
-                               title="Synthetic + Video",
-                               save_path="pitnn_ablation_video_heatmaps.png")
-
         # Print delta table — how much does video augmentation help each model
         print("\n" + "=" * 80)
         print("  VIDEO AUGMENTATION DELTA  (Synthetic+Video MAE − Synthetic MAE)")
@@ -1198,13 +997,11 @@ def main():
     print("  pitnn_ablation_results.png          — MAE bar chart (synthetic)")
     print("  pitnn_ablation_training.png         — training curves (synthetic)")
     print("  pitnn_ablation_perangle.png         — per-angle MAE (synthetic)")
-    print("  pitnn_ablation_heatmaps.png         — operating-range heatmaps (synthetic)")
     if args.video:
         print("  pitnn_ablation_video_results.csv    — synthetic+video results")
         print("  pitnn_ablation_video_results.png    — MAE bar chart (video)")
         print("  pitnn_ablation_video_training.png   — training curves (video)")
         print("  pitnn_ablation_video_perangle.png   — per-angle MAE (video)")
-        print("  pitnn_ablation_video_heatmaps.png   — operating-range heatmaps (video)")
         print("  pitnn_ablation_video_comparison.png — side-by-side comparison")
         print("  pitnn_ablation_video_extraction.png — video extraction diagnostic")
 
