@@ -48,7 +48,7 @@ High-power configuration (10kW–80kW):
     phi3 ∈ [PHI_MIN,   PHI3_MAX]  rad  (external phase shift)
 """
 
-import math, time, warnings, argparse
+import math, time, warnings, argparse, random
 import numpy as np
 import matplotlib; matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -776,7 +776,7 @@ def generate_dataset(n_samples=10000,seq_len=20,
     Generate (X, Y) pairs where Y = [phi1_opt, phi2_opt, phi3_opt].
     All three angles come from solve_optimal_phi() which searches across
     a grid of phi12 values and selects the most efficient ZVS-maintaining
-    solution. 20% of samples are drawn from the low-power region (5–15kW)
+    solution. 30% of samples are drawn from the low-power region (0.3–1.5kW)
     to improve accuracy near the physics floor.
     """
     rng=np.random.default_rng(seed); dab=DABPhysics()
@@ -1126,9 +1126,451 @@ def plot_all(hist,dab):
 # MAIN
 # ═════════════════════════════════════════════════════════════════════════════
 
-def set_seed(seed: int):
+def plot_control_results(ctrl, dab):
+    """
+    Five control-oriented evaluation plots.
+    Each operating point evaluated independently with reset + prime + warm-up
+    to avoid the sequential-sweep artefact.
+    """
+    import matplotlib.patches as mpatches
+    N_WARMUP = 10
+
+    Prefs   = np.linspace(500, 3300, 60)
+    V1, V2  = 400.0, 250.0
+    dab.V1, dab.V2 = V1, V2
+
+    pitnn_P, pitnn_Irms, pitnn_zvs = [], [], []
+    pitnn_phi1, pitnn_phi3         = [], []
+    solver_P, solver_Irms          = [], []
+
+    for Pref in Prefs:
+        phi_seed = dab.solve_optimal_phi(float(Pref))
+        solver_P.append(dab.compute_power(*phi_seed))
+        solver_Irms.append(dab.compute_irms(*phi_seed))
+
+        ctrl.reset()
+        ctrl.prime(V1, V2, float(Pref), phi_seed)
+        phi_cur = phi_seed
+        for _ in range(N_WARMUP):
+            r = ctrl.step(V1, V2, None, float(Pref), phi_cur)
+            phi_cur = r["phi_TPS"]
+        r = ctrl.step(V1, V2, None, float(Pref), phi_cur)
+        pitnn_P.append(r["P_calc"])
+        pitnn_Irms.append(r["Irms"])
+        pitnn_zvs.append(1 if r["zvs_ok"] else 0)
+        pitnn_phi1.append(r["phi_TPS"][0])
+        pitnn_phi3.append(r["phi_TPS"][2])
+
+    pitnn_P     = np.array(pitnn_P)
+    pitnn_Irms  = np.array(pitnn_Irms)
+    solver_P    = np.array(solver_P)
+    solver_Irms = np.array(solver_Irms)
+    Prefs_kW    = Prefs / 1000
+    P_err_pct   = np.abs(pitnn_P - Prefs) / Prefs * 100
+
+    # 1. Power Tracking
+    fig, axes = plt.subplots(2, 1, figsize=(10, 7), sharex=True)
+    axes[0].plot(Prefs_kW, Prefs/1000, "k--", lw=1.5, label="P_ref")
+    axes[0].plot(Prefs_kW, solver_P/1000, "g-", lw=1.8, label="Solver P_calc")
+    axes[0].plot(Prefs_kW, pitnn_P/1000,  "b-", lw=1.8, label="PITNN P_calc")
+    axes[0].set_ylabel("Power (kW)", fontsize=11)
+    axes[0].set_title(f"Power Tracking — PITNN vs Offline Solver\n"
+                      f"(each point: reset + prime + {N_WARMUP} warm-up steps)", fontsize=11)
+    axes[0].legend(fontsize=9); axes[0].grid(True, alpha=0.3, ls="--")
+    axes[0].set_ylim(bottom=0)
+    axes[1].plot(Prefs_kW, P_err_pct, "b-", lw=1.8, label="PITNN |ΔP|%")
+    axes[1].axhline(10, color="r", ls="--", lw=1.2, label="10% threshold")
+    axes[1].fill_between(Prefs_kW, P_err_pct, 0, where=P_err_pct<=10,
+                         alpha=0.15, color="blue", label="Within ±10%")
+    axes[1].fill_between(Prefs_kW, P_err_pct, 0, where=P_err_pct>10,
+                         alpha=0.25, color="red", label=">10% error")
+    axes[1].set_xlabel("P_ref (kW)", fontsize=11)
+    axes[1].set_ylabel("|ΔP| / P_ref (%)", fontsize=11)
+    axes[1].legend(fontsize=9); axes[1].grid(True, alpha=0.3, ls="--")
+    axes[1].set_ylim(bottom=0)
+    plt.tight_layout()
+    plt.savefig("pitnn_power_tracking.png", dpi=180, bbox_inches="tight")
+    plt.close(); print("  Saved: pitnn_power_tracking.png")
+
+    # 2. ZVS Status Map
+    V2_range   = np.linspace(220, 280, 30)
+    Pref_range = np.linspace(500, 3300, 30)
+    V2g, Pg    = np.meshgrid(V2_range, Pref_range)
+    zvs_map    = np.zeros_like(V2g)
+    for i in range(V2g.shape[0]):
+        for j in range(V2g.shape[1]):
+            dab.V1, dab.V2 = 400.0, float(V2g[i, j])
+            phi_s = dab.solve_optimal_phi(float(Pg[i, j]))
+            ctrl.reset(); ctrl.prime(400.0, float(V2g[i,j]), float(Pg[i,j]), phi_s)
+            phi_cur = phi_s
+            for _ in range(N_WARMUP):
+                r = ctrl.step(400.0, float(V2g[i,j]), None, float(Pg[i,j]), phi_cur)
+                phi_cur = r["phi_TPS"]
+            r = ctrl.step(400.0, float(V2g[i,j]), None, float(Pg[i,j]), phi_cur)
+            zvs_map[i, j] = 0 if r["zvs_ok"] else 1
+    dab.V1, dab.V2 = 400.0, 250.0
+    fig, ax = plt.subplots(figsize=(9, 6))
+    ax.contourf(V2g, Pg/1000, zvs_map, levels=[-0.5,0.5,1.5],
+                colors=["#2ecc71","#e74c3c"], alpha=0.7)
+    ax.contour(V2g, Pg/1000, zvs_map, levels=[0.5], colors=["k"], linewidths=1.5)
+    ax.set_xlabel("V2 (V)", fontsize=11); ax.set_ylabel("P_ref (kW)", fontsize=11)
+    ax.set_title("PITNN ZVS Status Map  (V1 = 400V fixed)", fontsize=12)
+    ax.legend(handles=[
+        mpatches.Patch(color="#2ecc71", alpha=0.7, label="ZVS maintained"),
+        mpatches.Patch(color="#e74c3c", alpha=0.7, label="ZVS lost"),
+    ], fontsize=9, loc="upper left"); ax.grid(True, alpha=0.25, ls="--")
+    plt.tight_layout()
+    plt.savefig("pitnn_zvs_map.png", dpi=180, bbox_inches="tight")
+    plt.close(); print("  Saved: pitnn_zvs_map.png")
+
+    # 3. RMS Current vs Load
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+    axes[0].plot(Prefs_kW, solver_Irms, "g-",  lw=2.0, label="Solver I_rms")
+    axes[0].plot(Prefs_kW, pitnn_Irms,  "b--", lw=2.0, label="PITNN I_rms")
+    axes[0].set_xlabel("P_ref (kW)", fontsize=11)
+    axes[0].set_ylabel("I_rms (A)", fontsize=11)
+    axes[0].set_title("RMS Inductor Current vs Load", fontsize=12)
+    axes[0].legend(fontsize=9); axes[0].grid(True, alpha=0.3, ls="--")
+    Irms_err = (pitnn_Irms - solver_Irms) / (solver_Irms + 1e-6) * 100
+    axes[1].plot(Prefs_kW, Irms_err, "b-", lw=1.8)
+    axes[1].axhline(0, color="k", lw=1.0)
+    axes[1].fill_between(Prefs_kW, Irms_err, 0, where=Irms_err>=0,
+                         alpha=0.2, color="red", label="PITNN higher Irms")
+    axes[1].fill_between(Prefs_kW, Irms_err, 0, where=Irms_err<0,
+                         alpha=0.2, color="green", label="PITNN lower Irms")
+    axes[1].set_xlabel("P_ref (kW)", fontsize=11)
+    axes[1].set_ylabel("ΔI_rms / I_rms_solver (%)", fontsize=11)
+    axes[1].set_title("I_rms Deviation from Solver Reference", fontsize=12)
+    axes[1].legend(fontsize=9); axes[1].grid(True, alpha=0.3, ls="--")
+    plt.tight_layout()
+    plt.savefig("pitnn_irms_efficiency.png", dpi=180, bbox_inches="tight")
+    plt.close(); print("  Saved: pitnn_irms_efficiency.png")
+
+    # 4. Load-step transient
+    load_profile = [
+        (500,  20), (1650, 25), (500,  20),
+        (3300, 25), (1650, 20), (500,  20),
+    ]
+    P_refs_t, P_pitnn_t, Irms_t, zvs_t = [], [], [], []
+    steps = []; cycle = 0
+    dab.V1, dab.V2 = 400.0, 250.0
+    ctrl.reset()
+    phi_seed = dab.solve_optimal_phi(float(load_profile[0][0]))
+    ctrl.prime(400.0, 250.0, float(load_profile[0][0]), phi_seed)
+    phi_cur = phi_seed
+    for Pref_step, n_cyc in load_profile:
+        for _ in range(n_cyc):
+            r = ctrl.step(400.0, 250.0, None, float(Pref_step), phi_cur)
+            P_refs_t.append(Pref_step/1000); P_pitnn_t.append(r["P_calc"]/1000)
+            Irms_t.append(r["Irms"]); zvs_t.append(1 if r["zvs_ok"] else 0)
+            phi_cur = r["phi_TPS"]; cycle += 1
+        steps.append(cycle)
+    cyc_arr = np.arange(len(P_refs_t))
+    fig, axes = plt.subplots(3, 1, figsize=(12, 9), sharex=True)
+    axes[0].step(cyc_arr, P_refs_t,  "k--", lw=1.8, label="P_ref",   where="post")
+    axes[0].step(cyc_arr, P_pitnn_t, "b-",  lw=2.0, label="P_PITNN", where="post")
+    for s in steps[:-1]: axes[0].axvline(s, color="gray", lw=0.8, ls=":")
+    axes[0].set_ylabel("Power (kW)", fontsize=11)
+    axes[0].set_title("Load-Step Transient Response — PITNN Controller", fontsize=12)
+    axes[0].legend(fontsize=9); axes[0].grid(True, alpha=0.3, ls="--")
+    axes[1].plot(cyc_arr, Irms_t, "r-", lw=1.8)
+    for s in steps[:-1]: axes[1].axvline(s, color="gray", lw=0.8, ls=":")
+    axes[1].set_ylabel("I_rms (A)", fontsize=11)
+    axes[1].set_title("Inductor RMS Current During Load Steps", fontsize=12)
+    axes[1].grid(True, alpha=0.3, ls="--")
+    axes[2].bar(cyc_arr, zvs_t,
+                color=["#2ecc71" if z else "#e74c3c" for z in zvs_t],
+                width=1.0, alpha=0.8)
+    for s in steps[:-1]: axes[2].axvline(s, color="gray", lw=0.8, ls=":")
+    axes[2].set_xlabel("Switching Cycle (× update period)", fontsize=11)
+    axes[2].set_ylabel("ZVS Status", fontsize=11)
+    axes[2].set_yticks([0,1]); axes[2].set_yticklabels(["Lost","OK"], fontsize=9)
+    axes[2].set_title("ZVS Status During Load Steps", fontsize=12)
+    axes[2].legend(handles=[
+        mpatches.Patch(color="#2ecc71", alpha=0.8, label="ZVS OK"),
+        mpatches.Patch(color="#e74c3c", alpha=0.8, label="ZVS lost"),
+    ], fontsize=9); axes[2].grid(True, alpha=0.3, ls="--")
+    plt.tight_layout()
+    plt.savefig("pitnn_transient.png", dpi=180, bbox_inches="tight")
+    plt.close(); print("  Saved: pitnn_transient.png")
+
+    # 5. Operating Point Map
+    dab.V1, dab.V2 = 400.0, 250.0
+    phi1_all, phi3_all, perr_all, zvs_all = [], [], [], []
+    for Pref in np.linspace(500, 3300, 80):
+        phi_seed = dab.solve_optimal_phi(float(Pref))
+        ctrl.reset(); ctrl.prime(400.0, 250.0, float(Pref), phi_seed)
+        phi_cur = phi_seed
+        for _ in range(N_WARMUP):
+            r = ctrl.step(400.0, 250.0, None, float(Pref), phi_cur)
+            phi_cur = r["phi_TPS"]
+        r = ctrl.step(400.0, 250.0, None, float(Pref), phi_cur)
+        phi1_all.append(r["phi_TPS"][0]); phi3_all.append(r["phi_TPS"][2])
+        perr_all.append(r["P_err_pct"]);  zvs_all.append(r["zvs_ok"])
+    fig, ax = plt.subplots(figsize=(9, 6))
+    sc = ax.scatter(phi1_all, phi3_all, c=perr_all,
+                    cmap="RdYlGn_r", vmin=0, vmax=15, s=60, zorder=3)
+    for p1, p3, zvs in zip(phi1_all, phi3_all, zvs_all):
+        if not zvs:
+            ax.scatter(p1, p3, s=120, facecolors="none",
+                       edgecolors="red", lw=1.8, zorder=4)
+    plt.colorbar(sc, ax=ax).set_label("|ΔP| / P_ref (%)", fontsize=10)
+    ax.set_xlabel("φ1 (rad)", fontsize=11); ax.set_ylabel("φ3 (rad)", fontsize=11)
+    ax.set_title("PITNN Operating Point Map  (V1=400V, V2=250V, P=0.5–3.3kW)\n"
+                 "Colour = |ΔP|%  |  Red ring = ZVS lost", fontsize=11)
+    ax.grid(True, alpha=0.3, ls="--")
+    plt.tight_layout()
+    plt.savefig("pitnn_operating_map.png", dpi=180, bbox_inches="tight")
+    plt.close(); print("  Saved: pitnn_operating_map.png")
+
+
+def plot_closed_loop_transient(ctrl, dab,
+                               save_path="pitnn_transient_closedloop.png"):
+    """
+    Closed-loop transient: 0.5 → 1.65 → 3.3 → 1.65 → 0.5 kW
+    at V1=400V, V2=250V, fsw=100kHz.
+    PITNN called every 50 cycles (500µs). Full waveform simulated per cycle.
+    """
+    import matplotlib.patches as mpatches
+    import matplotlib.gridspec as gridspec
+
+    FSW_SIM       = 100e3
+    UPDATE_CYCLES = 50
+    Ts            = 1.0 / FSW_SIM
+    T_update      = UPDATE_CYCLES * Ts
+
+    profile = [
+        (500,  30), (1650, 30), (3300, 30), (1650, 30), (500, 30),
+    ]
+    V1, V2 = 400.0, 250.0
+    dab.V1, dab.V2 = V1, V2
+
+    ctrl.reset()
+    phi_seed = dab.solve_optimal_phi(float(profile[0][0]))
+    ctrl.prime(V1, V2, float(profile[0][0]), phi_seed)
+    phi_cur = list(phi_seed)
+
+    t_vec, phi1_vec, phi2_vec, phi3_vec = [], [], [], []
+    P_ref_vec, P_calc_vec, Irms_vec, zvs_vec = [], [], [], []
+    step_times = []; t_now = 0.0
+
+    for seg_idx, (Pref_W, n_updates) in enumerate(profile):
+        if seg_idx > 0:
+            step_times.append(t_now * 1e3)
+        for _ in range(n_updates):
+            r       = ctrl.step(V1, V2, None, float(Pref_W), phi_cur)
+            phi_cur = list(r["phi_TPS"])
+            for cyc in range(UPDATE_CYCLES):
+                t_cyc = t_now + cyc * Ts
+                _, vab, _, _, iL = dab.simulate_current(
+                    float(phi_cur[0]), float(phi_cur[1]),
+                    float(phi_cur[2]), N_pts=400)
+                P_cyc    = float(np.mean(vab * iL))
+                Irms_cyc = float(np.sqrt(np.mean(iL**2)))
+                zvs_ok, _ = dab.check_zvs(*phi_cur)
+                t_vec.append(t_cyc*1e3); phi1_vec.append(float(phi_cur[0]))
+                phi2_vec.append(float(phi_cur[1])); phi3_vec.append(float(phi_cur[2]))
+                P_ref_vec.append(Pref_W/1000); P_calc_vec.append(P_cyc/1000)
+                Irms_vec.append(Irms_cyc); zvs_vec.append(1 if zvs_ok else 0)
+            t_now += UPDATE_CYCLES * Ts
+
+    t_vec=np.array(t_vec); phi1_vec=np.array(phi1_vec)
+    phi2_vec=np.array(phi2_vec); phi3_vec=np.array(phi3_vec)
+    P_ref_vec=np.array(P_ref_vec); P_calc_vec=np.array(P_calc_vec)
+    Irms_vec=np.array(Irms_vec)
+
+    fig = plt.figure(figsize=(13, 11))
+    gs  = gridspec.GridSpec(4, 1, hspace=0.08, figure=fig)
+    ax1 = fig.add_subplot(gs[0]); ax2 = fig.add_subplot(gs[1], sharex=ax1)
+    ax3 = fig.add_subplot(gs[2], sharex=ax1); ax4 = fig.add_subplot(gs[3], sharex=ax1)
+
+    ax1.plot(t_vec, phi1_vec, color="#1a6bbd", lw=1.6, label="φ₁ (primary duty)")
+    ax1.plot(t_vec, phi2_vec, color="#2ecc71", lw=1.6, ls="--", label="φ₂ (secondary duty)")
+    ax1.plot(t_vec, phi3_vec, color="#e74c3c", lw=1.8, label="φ₃ (phase shift)")
+    ax1.set_ylabel("Angle (rad)", fontsize=11)
+    ax1.set_title("Closed-Loop Transient — PITNN TPS Controller\n"
+                  "V1=400V, V2=250V, fsw=100kHz, update every 50 cycles (500µs)",
+                  fontsize=11)
+    ax1.legend(fontsize=9, loc="upper right", ncol=3)
+    ax1.grid(True, alpha=0.3, ls="--")
+    for st in step_times: ax1.axvline(st, color="gray", lw=0.9, ls=":")
+    ax1.tick_params(labelbottom=False)
+
+    ax2.step(t_vec, P_ref_vec,  "k--", lw=1.8, label="P_ref",   where="post")
+    ax2.plot(t_vec, P_calc_vec, color="#1a6bbd", lw=1.4, label="P_calc (PITNN)")
+    ax2.set_ylabel("Power (kW)", fontsize=11)
+    ax2.legend(fontsize=9, loc="upper right", ncol=2)
+    ax2.grid(True, alpha=0.3, ls="--")
+    for st in step_times: ax2.axvline(st, color="gray", lw=0.9, ls=":")
+    ax2.tick_params(labelbottom=False)
+
+    ax3.plot(t_vec, Irms_vec, color="#e67e22", lw=1.6)
+    ax3.set_ylabel("I_rms (A)", fontsize=11)
+    ax3.grid(True, alpha=0.3, ls="--")
+    for st in step_times: ax3.axvline(st, color="gray", lw=0.9, ls=":")
+    t_acc = 0.0
+    for Pref_W, n_up in profile:
+        seg_dur = n_up * T_update * 1e3
+        mask = (t_vec >= t_acc + seg_dur*0.5) & (t_vec < t_acc + seg_dur)
+        if mask.sum() > 0:
+            irms_avg = float(Irms_vec[mask].mean())
+            t_mid    = t_acc + seg_dur * 0.55
+            ax3.annotate(f"{irms_avg:.1f} A", xy=(t_mid, irms_avg),
+                         xytext=(t_mid, irms_avg + max(Irms_vec)*0.08),
+                         fontsize=8, ha="center", color="#e67e22",
+                         arrowprops=dict(arrowstyle="-", color="#e67e22", lw=0.8))
+        t_acc += seg_dur
+    ax3.tick_params(labelbottom=False)
+
+    zvs_colors = ["#2ecc71" if z else "#e74c3c" for z in zvs_vec]
+    ax4.bar(t_vec, zvs_vec, width=T_update*1e3*0.95,
+            color=zvs_colors, alpha=0.85, align="edge")
+    ax4.set_yticks([0,1]); ax4.set_yticklabels(["Lost","OK"], fontsize=9)
+    ax4.set_ylabel("ZVS", fontsize=11); ax4.set_xlabel("Time (ms)", fontsize=11)
+    ax4.grid(True, alpha=0.3, ls="--")
+    for st in step_times: ax4.axvline(st, color="gray", lw=0.9, ls=":")
+    for st, (Pref_W, _) in zip(step_times, profile[1:]):
+        ax4.annotate(f"{Pref_W/1000:.1f}kW", xy=(st, 0.5), xytext=(st+2, 0.5),
+                     fontsize=8, color="gray",
+                     arrowprops=dict(arrowstyle="->", color="gray", lw=0.8))
+    ax4.legend(handles=[
+        mpatches.Patch(color="#2ecc71", alpha=0.85, label="ZVS maintained"),
+        mpatches.Patch(color="#e74c3c", alpha=0.85, label="ZVS lost"),
+    ], fontsize=9, loc="lower right")
+
+    plt.savefig(save_path, dpi=200, bbox_inches="tight")
+    plt.close(); print(f"  Saved: {save_path}")
+
+
+def plot_operating_range_maps(ctrl, dab,
+                              save_path="pitnn_operating_range_maps.png"):
+    """
+    Full operating-range heatmaps: 35×35 grid over
+    V2 ∈ [220, 280] V  (V1=400V fixed)
+    Pref ∈ [500, 3300] W
+    Four panels: power error, I_rms, ZVS violation, TPS prediction error.
+    Each point: independent reset + prime + warm-up.
+    """
+    from mpl_toolkits.axes_grid1 import make_axes_locatable
+
+    N_WARMUP  = 5
+    V1_FIXED  = 400.0
+    V2_vals   = np.linspace(220, 280, 35)
+    Pref_vals = np.linspace(500, 3300, 35)
+    V2g, Pg   = np.meshgrid(V2_vals, Pref_vals)
+    extent    = [V2_vals[0], V2_vals[-1],
+                 Pref_vals[0]/1000, Pref_vals[-1]/1000]
+
+    P_err_map   = np.full_like(V2g, np.nan)
+    Irms_map    = np.full_like(V2g, np.nan)
+    ZVS_map     = np.zeros_like(V2g)
+    phi_err_map = np.full_like(V2g, np.nan)
+    Irms_solver = np.full_like(V2g, np.nan)
+
+    print(f"  Grid: {V2g.shape[0]}×{V2g.shape[1]} = {V2g.size} points ...")
+    for i in range(V2g.shape[0]):
+        for j in range(V2g.shape[1]):
+            V2   = float(V2g[i, j])
+            Pref = float(Pg[i, j])
+            dab.V1, dab.V2 = V1_FIXED, V2
+            try:
+                phi_sol = dab.solve_optimal_phi(Pref)
+                Irms_solver[i, j] = dab.compute_irms(*phi_sol)
+                ctrl.reset(); ctrl.prime(V1_FIXED, V2, Pref, phi_sol)
+                phi_cur = phi_sol
+                for _ in range(N_WARMUP):
+                    r = ctrl.step(V1_FIXED, V2, None, Pref, phi_cur)
+                    phi_cur = r["phi_TPS"]
+                r = ctrl.step(V1_FIXED, V2, None, Pref, phi_cur)
+                phi_pit = r["phi_TPS"]
+                P_pit   = dab.compute_power(*phi_pit)
+                P_err_map[i, j]   = abs(P_pit-Pref)/max(Pref,1)*100
+                Irms_map[i, j]    = dab.compute_irms(*phi_pit)
+                zvs_ok, _         = dab.check_zvs(*phi_pit)
+                ZVS_map[i, j]     = 0 if zvs_ok else 1
+                phi_err_map[i, j] = float(np.degrees(np.mean(
+                    np.abs(np.array(phi_pit)-np.array(phi_sol)))))
+            except Exception:
+                pass
+        if (i+1) % 7 == 0:
+            print(f"    {i+1}/{V2g.shape[0]} rows done")
+    dab.V1, dab.V2 = 400.0, 250.0
+
+    fig, axes = plt.subplots(2, 2, figsize=(14, 11))
+    fig.suptitle(
+        "PITNN Full Operating-Range Maps\n"
+        f"V1={V1_FIXED:.0f}V (fixed)  |  "
+        f"V2 ∈ [{V2_vals[0]:.0f}, {V2_vals[-1]:.0f}]V  |  "
+        f"P_ref ∈ [{Pref_vals[0]/1000:.1f}, {Pref_vals[-1]/1000:.1f}]kW  |  "
+        f"Grid: {V2g.shape[0]}×{V2g.shape[1]}",
+        fontsize=12, y=1.01)
+
+    def _cb(ax, im, label):
+        div = make_axes_locatable(ax)
+        cax = div.append_axes("right", size="5%", pad=0.08)
+        fig.colorbar(im, cax=cax).set_label(label, fontsize=10)
+
+    def _lbl(ax, title):
+        ax.set_xlabel("V2 (V)", fontsize=10); ax.set_ylabel("P_ref (kW)", fontsize=10)
+        ax.set_title(title, fontsize=11, fontweight="bold"); ax.tick_params(labelsize=9)
+
+    ax = axes[0,0]
+    im = ax.imshow(P_err_map, origin="lower", extent=extent,
+                   aspect="auto", cmap="RdYlGn_r", vmin=0, vmax=15)
+    _cb(ax, im, "|ΔP|/P_ref (%)")
+    cs = ax.contour(V2g, Pg/1000, P_err_map, levels=[10], colors=["k"], linewidths=1.5)
+    ax.clabel(cs, fmt="10%%", fontsize=8); ax.axvline(250, color="white", lw=0.9, ls=":")
+    _lbl(ax, "(a) Power Tracking Error  |ΔP|/P_ref (%)")
+
+    ax = axes[0,1]
+    im = ax.imshow(Irms_map, origin="lower", extent=extent, aspect="auto", cmap="plasma")
+    _cb(ax, im, "I_rms (A)")
+    cs2 = ax.contour(V2g, Pg/1000, Irms_solver, levels=6, colors=["white"],
+                     linewidths=0.9, linestyles=["--"])
+    ax.clabel(cs2, fmt="%.1f A", fontsize=7, colors="white")
+    ax.axvline(250, color="white", lw=0.9, ls=":")
+    _lbl(ax, "(b) I_rms (A)\nDashed: solver reference")
+
+    ax = axes[1,0]
+    im = ax.imshow(ZVS_map, origin="lower", extent=extent, aspect="auto",
+                   cmap="RdYlGn_r", vmin=0, vmax=1)
+    _cb(ax, im, "ZVS lost (1) / OK (0)")
+    cs3 = ax.contour(V2g, Pg/1000, ZVS_map, levels=[0.5], colors=["k"], linewidths=2.0)
+    ax.axvline(250, color="white", lw=0.9, ls=":")
+    _lbl(ax, "(c) ZVS Violation Map\nGreen=OK  |  Red=lost")
+
+    ax = axes[1,1]
+    im = ax.imshow(phi_err_map, origin="lower", extent=extent,
+                   aspect="auto", cmap="YlOrRd", vmin=0)
+    _cb(ax, im, "Mean |φ_PITNN−φ_solver| (°)")
+    cs4 = ax.contour(V2g, Pg/1000, phi_err_map, levels=5, colors=["k"],
+                     linewidths=0.7, alpha=0.6)
+    ax.clabel(cs4, fmt="%.2f°", fontsize=7)
+    ax.axvline(250, color="white", lw=0.9, ls=":")
+    _lbl(ax, "(d) TPS Prediction Error\nMean |φ_PITNN−φ_solver| (°)")
+
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=200, bbox_inches="tight")
+    plt.close(); print(f"  Saved: {save_path}")
+
+
+
     """Fix all random sources for a reproducible training run."""
     import random
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark     = False
+
+
+def set_seed(seed: int):
+    """
+    Fix all random sources for a fully reproducible training run.
+    Called once per run with seed+k so each run is independent but
+    individually reproducible.
+    """
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -1302,6 +1744,20 @@ def main():
     # [6] Plots
     print("\n[5] Plots")
     plot_all(hist,dab)
+
+    # Control-oriented plots (each point: reset + prime + warm-up)
+    ctrl_eval = PITNNController(model, mu, sigma, dab, device=device)
+    plot_control_results(ctrl_eval, dab)
+
+    # Closed-loop transient simulation
+    print("  Running closed-loop transient simulation ...")
+    ctrl_transient = PITNNController(model, mu, sigma, dab, device=device)
+    plot_closed_loop_transient(ctrl_transient, dab)
+
+    # Full operating-range heatmaps
+    print("  Building full operating-range maps (35×35 grid) ...")
+    ctrl_maps = PITNNController(model, mu, sigma, dab, device=device)
+    plot_operating_range_maps(ctrl_maps, dab)
 
     # [7] Inference — PITNN vs offline solver
     print("\n[6] Real-Time Inference  (§V-E, Eq. 38: φ_TPS = f_θ(X))")
