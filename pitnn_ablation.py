@@ -406,22 +406,35 @@ def train_model(
         mae_phi2 = (pt[:, 1] - Yte[:, 1]).abs().mean().item()
         mae_phi3 = (pt[:, 2] - Yte[:, 2]).abs().mean().item()
 
-        # ZVS violation rate — evaluate predicted angles against DAB physics
+        # ZVS violation rate — model-induced violations only
+        # Counts cases where MODEL loses ZVS but the SOLVER (label) maintains it.
+        # This removes the ~48% baseline from V2>V1/n operating points
+        # that lose ZVS regardless of which model is used, so the metric
+        # reflects model prediction quality rather than dataset composition.
         dab_eval = DABPhysics()
         phi1_np  = pt[:, 0].cpu().numpy()
         phi2_np  = pt[:, 1].cpu().numpy()
         phi3_np  = pt[:, 2].cpu().numpy()
         V1_np    = Xr_te[:, -1, 0].cpu().numpy()
         V2_np    = Xr_te[:, -1, 1].cpu().numpy()
-        n_zvs_violated = 0
+        n_solver_zvs_ok = 0   # points where ZVS is achievable (solver maintains it)
+        n_model_worse   = 0   # model loses ZVS at a point where solver did not
+
         for i in range(len(phi1_np)):
             dab_eval.V1 = float(V1_np[i])
             dab_eval.V2 = float(V2_np[i])
-            zvs_ok, _   = dab_eval.check_zvs(
+            solver_zvs_ok, _ = dab_eval.check_zvs(
+                float(Yte[i, 0].item()), float(Yte[i, 1].item()),
+                float(Yte[i, 2].item()))
+            model_zvs_ok, _  = dab_eval.check_zvs(
                 float(phi1_np[i]), float(phi2_np[i]), float(phi3_np[i]))
-            if not zvs_ok:
-                n_zvs_violated += 1
-        zvs_violation_rate = n_zvs_violated / max(len(phi1_np), 1) * 100
+            if solver_zvs_ok:
+                n_solver_zvs_ok += 1
+                if not model_zvs_ok:
+                    n_model_worse += 1
+
+        # % of ZVS-achievable points where the model unnecessarily loses ZVS
+        zvs_violation_rate = (n_model_worse / max(n_solver_zvs_ok, 1)) * 100
 
     elapsed = time.perf_counter() - t0_total
     print(f"  ► MSE={mse:.6f}  MAE={mae:.6f} rad ({math.degrees(mae):.3f}°)  "
@@ -459,6 +472,7 @@ def print_results_table(results, title="Synthetic Only", csv_path="pitnn_ablatio
     print("\n" + "=" * 115)
     print(f"  ABLATION STUDY & BASELINE COMPARISON — {title}")
     print(f"  All models trained with identical PITNNLoss (λ_p=1.0, λ_ZVS=0.5)")
+    print(f"  ZVS viol% = model-induced violations on ZVS-achievable test points only")
     print("=" * 115)
     hdr = (f"  {'Model':<30} {'Params':>8}  {'MSE (rad²)':>12}  "
            f"{'MAE (°)':>9}  {'φ1 MAE(°)':>10}  "
