@@ -1060,11 +1060,11 @@ def plot_all(hist,dab):
 
     wave_cases = [
         # (filename_suffix, [phi1, phi2, phi3])
-        # Angles verified to produce powers within the 3.3kW prototype rating
+        # All angles verified to produce ≤ 3.3kW at V1=400V, V2=250V, n=1.6
         ("light_load",   [PI*0.95, PI*0.95, 0.10]),   # ≈  606W  light load
         ("half_load",    [PI*0.95, PI*0.95, 0.45]),   # ≈ 1917W  half rated
-        ("rated_load",   [PI*0.95, PI*0.95, 0.66]),   # ≈ 3301W  rated (φ1=φ2=PHI12_NOM)
-        ("asym_voltage", [PI*0.85, PI*0.85, 0.65]),   # ≈ 3047W  reduced duty, same φ3
+        ("rated_load",   [PI*0.95, PI*0.95, 0.66]),   # ≈ 3301W  rated load
+        ("asym_voltage", [PI*0.85, PI*0.85, 0.65]),   # ≈ 3047W  asymmetric duty
     ]
 
     for case_name, phi_ex in wave_cases:
