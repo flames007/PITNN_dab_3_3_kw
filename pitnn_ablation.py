@@ -74,7 +74,7 @@ np.random.seed(42)
 # ── Import shared infrastructure from pitnn_dab.py ───────────────────────────
 from pitnn_dab import (
     # Constants
-    PI, PHI_MIN, PHI12_MIN, PHI12_MAX, PHI3_MAX, LK, N_TURNS, FSW, V1_NOM,
+    PI, PHI_MIN, PHI12_MIN, PHI12_MAX, PHI3_MAX, LK, N_TURNS, FSW, V1_NOM, V2_NOM, P_RATED,
     K_POWER, B_POWER,
     # Dataset + physics
     generate_dataset, DABPhysics,
@@ -417,27 +417,47 @@ def train_model(
         mae_phi2 = (pt[:, 1] - Yte[:, 1]).abs().mean().item()
         mae_phi3 = (pt[:, 2] - Yte[:, 2]).abs().mean().item()
 
+    # ZVS violation rate on test set
+    dab_eval = DABPhysics()
+    phi1_np = pt[:, 0].cpu().numpy()
+    phi2_np = pt[:, 1].cpu().numpy()
+    phi3_np = pt[:, 2].cpu().numpy()
+    V1_np   = Xr_te[:, -1, 0].cpu().numpy()
+    V2_np   = Xr_te[:, -1, 1].cpu().numpy()
+    n_zvs_violated = 0
+    for i in range(len(phi1_np)):
+        dab_eval.V1 = float(V1_np[i])
+        dab_eval.V2 = float(V2_np[i])
+        zvs_ok, _   = dab_eval.check_zvs(
+            float(phi1_np[i]), float(phi2_np[i]), float(phi3_np[i]))
+        if not zvs_ok:
+            n_zvs_violated += 1
+    zvs_violation_rate = n_zvs_violated / max(len(phi1_np), 1) * 100
+
     elapsed = time.perf_counter() - t0_total
     print(f"  ► MSE={mse:.6f}  MAE={mae:.6f} rad ({math.degrees(mae):.3f}°)  "
           f"[φ1={math.degrees(mae_phi1):.3f}°  "
           f"φ2={math.degrees(mae_phi2):.3f}°  "
           f"φ3={math.degrees(mae_phi3):.3f}°]  "
+          f"ZVS viol={zvs_violation_rate:.1f}%  "
           f"time={elapsed:.1f}s")
 
     return {
-        "name"      : name,
-        "n_params"  : n_p,
-        "test_mse"  : mse,
-        "test_mae"  : mae,
-        "test_mae_deg" : math.degrees(mae),
-        "mae_phi1_deg" : math.degrees(mae_phi1),
-        "mae_phi2_deg" : math.degrees(mae_phi2),
-        "mae_phi3_deg" : math.degrees(mae_phi3),
-        "train_time_s" : elapsed,
-        "hist_train"   : hist_train,
-        "hist_val"     : hist_val,
-        "Y_test"       : Yte.cpu().numpy(),
-        "Y_pred"       : pt.cpu().numpy(),
+        "name"               : name,
+        "n_params"           : n_p,
+        "test_mse"           : mse,
+        "test_mae"           : mae,
+        "test_mae_deg"       : math.degrees(mae),
+        "mae_phi1_deg"       : math.degrees(mae_phi1),
+        "mae_phi2_deg"       : math.degrees(mae_phi2),
+        "mae_phi3_deg"       : math.degrees(mae_phi3),
+        "zvs_violation_rate" : zvs_violation_rate,
+        "train_time_s"       : elapsed,
+        "hist_train"         : hist_train,
+        "hist_val"           : hist_val,
+        "Y_test"             : Yte.cpu().numpy(),
+        "Y_pred"             : pt.cpu().numpy(),
+        "_model"             : model,
     }
 
 
@@ -447,39 +467,42 @@ def train_model(
 
 def print_results_table(results, title="Synthetic Only", csv_path="pitnn_ablation_results.csv"):
     """Print and save the consolidated ablation results table."""
-    print("\n" + "=" * 100)
+    print("\n" + "=" * 115)
     print(f"  ABLATION STUDY & BASELINE COMPARISON — {title}")
-    print("=" * 100)
+    print("=" * 115)
     hdr = (f"  {'Model':<30} {'Params':>8}  {'MSE (rad²)':>12}  "
            f"{'MAE (°)':>9}  {'φ1 MAE(°)':>10}  "
-           f"{'φ2 MAE(°)':>10}  {'φ3 MAE(°)':>10}  {'Time(s)':>8}")
+           f"{'φ2 MAE(°)':>10}  {'φ3 MAE(°)':>10}  "
+           f"{'ZVS viol%':>10}  {'Time(s)':>8}")
     print(hdr)
-    print("  " + "-" * 98)
+    print("  " + "-" * 113)
 
     rows = []
     for r in results:
+        zvs_str = f"{r['zvs_violation_rate']:.1f}%"
         row = (f"  {r['name']:<30} {r['n_params']:>8,}  "
                f"{r['test_mse']:>12.6f}  "
                f"{r['test_mae_deg']:>9.3f}  "
                f"{r['mae_phi1_deg']:>10.3f}  "
                f"{r['mae_phi2_deg']:>10.3f}  "
                f"{r['mae_phi3_deg']:>10.3f}  "
+               f"{zvs_str:>10}  "
                f"{r['train_time_s']:>8.1f}")
         print(row)
         rows.append([
             r['name'], r['n_params'], r['test_mse'],
             r['test_mae_deg'], r['mae_phi1_deg'],
             r['mae_phi2_deg'], r['mae_phi3_deg'],
-            r['train_time_s'],
+            r['zvs_violation_rate'], r['train_time_s'],
         ])
 
-    print("=" * 100)
+    print("=" * 115)
 
     with open(csv_path, "w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(["Model", "Params", "MSE_rad2",
                          "MAE_deg", "MAE_phi1_deg", "MAE_phi2_deg",
-                         "MAE_phi3_deg", "TrainTime_s"])
+                         "MAE_phi3_deg", "ZVS_violation_pct", "TrainTime_s"])
         writer.writerows(rows)
     print(f"  Saved: {csv_path}")
 
@@ -506,32 +529,68 @@ def plot_results(results, title="Synthetic Only",
         else:
             colors.append("#e07b39")
 
-    # ── MAE bar chart ──────────────────────────────────────────────────────
-    fig, ax = plt.subplots(figsize=(14, 5))
-    bars = ax.bar(range(len(names)), maes, color=colors,
-                  edgecolor="white", linewidth=0.8)
-    ax.set_xticks(range(len(names)))
-    ax.set_xticklabels(names, rotation=30, ha="right", fontsize=9)
-    ax.set_ylabel("Test MAE (degrees)", fontsize=11)
-    ax.set_title(f"Ablation Study & Baseline Comparison — Test MAE ({title})",
-                 fontsize=13)
-    ax.yaxis.grid(True, alpha=0.35, linestyle="--")
-    ax.set_axisbelow(True)
+    # ── MAE bar chart + ZVS violation rate secondary axis ─────────────────
+    zvs = [r["zvs_violation_rate"] for r in results]
+    fig, ax1 = plt.subplots(figsize=(14, 5))
+    bars = ax1.bar(range(len(names)), maes, color=colors,
+                   edgecolor="white", linewidth=0.8, zorder=2)
+    ax1.set_xticks(range(len(names)))
+    ax1.set_xticklabels(names, rotation=30, ha="right", fontsize=9)
+    ax1.set_ylabel("Test MAE (degrees)", fontsize=11)
+    ax1.set_title(f"Ablation Study — Test MAE & ZVS Violation Rate ({title})",
+                  fontsize=12)
+    ax1.yaxis.grid(True, alpha=0.3, linestyle="--", zorder=0)
+    ax1.set_axisbelow(True)
     for bar, mae in zip(bars, maes):
-        ax.text(bar.get_x() + bar.get_width() / 2,
-                bar.get_height() + 0.003,
-                f"{mae:.3f}°", ha="center", va="bottom", fontsize=8)
+        ax1.text(bar.get_x() + bar.get_width() / 2,
+                 bar.get_height() + 0.003,
+                 f"{mae:.3f}°", ha="center", va="bottom", fontsize=7.5)
     from matplotlib.patches import Patch
     legend_elems = [
-        Patch(facecolor="#e07b39", label="Baselines (MLP / LSTM / GRU)"),
+        Patch(facecolor="#e07b39", label="Baselines"),
         Patch(facecolor="#5ba3d9", label="Ablations"),
         Patch(facecolor="#1a6bbd", label="Full PITNN"),
     ]
-    ax.legend(handles=legend_elems, loc="upper left", fontsize=9)
+    ax1.legend(handles=legend_elems, loc="upper left", fontsize=8)
+
+    ax2 = ax1.twinx()
+    ax2.plot(range(len(names)), zvs, "k--o", lw=1.5, ms=6,
+             label="ZVS viol. %", zorder=5)
+    ax2.set_ylabel("ZVS Violation Rate (%)", fontsize=11)
+    ax2.set_ylim(bottom=0)
+    for i, z in enumerate(zvs):
+        ax2.text(i, z + max(zvs+[1]) * 0.04, f"{z:.1f}%",
+                 ha="center", fontsize=7, color="black")
+    ax2.legend(fontsize=8, loc="upper right")
     plt.tight_layout()
     plt.savefig(bar_path, dpi=180, bbox_inches="tight")
     plt.close()
     print(f"  Saved: {bar_path}")
+
+    # ── Standalone ZVS violation bar chart ────────────────────────────────
+    zvs_path = bar_path.replace(".png", "_zvs.png")
+    fig, ax = plt.subplots(figsize=(14, 4.5))
+    bar_colors = ["#e74c3c" if z > 5 else "#f39c12" if z > 0 else "#2ecc71"
+                  for z in zvs]
+    bars_zvs = ax.bar(range(len(names)), zvs, color=bar_colors,
+                      edgecolor="white", linewidth=0.8)
+    ax.set_xticks(range(len(names)))
+    ax.set_xticklabels(names, rotation=30, ha="right", fontsize=9)
+    ax.set_ylabel("ZVS Violation Rate (%)", fontsize=11)
+    ax.set_title(f"ZVS Violation Rate per Variant ({title})\n"
+                 "Green=0%  |  Orange=0–5%  |  Red=>5%", fontsize=11)
+    ax.yaxis.grid(True, alpha=0.35, linestyle="--")
+    ax.set_axisbelow(True)
+    ax.axhline(0, color="k", lw=0.8)
+    for bar, z in zip(bars_zvs, zvs):
+        ax.text(bar.get_x() + bar.get_width() / 2,
+                bar.get_height() + max(zvs+[1]) * 0.02,
+                f"{z:.1f}%", ha="center", va="bottom",
+                fontsize=8.5, fontweight="bold")
+    plt.tight_layout()
+    plt.savefig(zvs_path, dpi=180, bbox_inches="tight")
+    plt.close()
+    print(f"  Saved: {zvs_path}")
 
     # ── Training curves ────────────────────────────────────────────────────
     n_models = len(results)
@@ -786,6 +845,111 @@ def plot_video_comparison(results_syn, results_vid,
 # Returns a fresh instance of every model variant for one training pass.
 # ═════════════════════════════════════════════════════════════════════════════
 
+def plot_ablation_heatmaps(results, mu, sigma, device, title="Synthetic Only",
+                           save_path="pitnn_ablation_heatmaps.png"):
+    """
+    Full operating-range heatmaps for every ablation variant.
+    Grid: V2 ∈ [220, 280] V  (V1=400V fixed), Pref ∈ [500, 3300] W, 25×25.
+    Four columns: power error, I_rms, ZVS violation, TPS prediction error.
+    """
+    from mpl_toolkits.axes_grid1 import make_axes_locatable
+
+    V1_FIXED  = 400.0
+    V2_vals   = np.linspace(220, 280, 25)
+    Pref_vals = np.linspace(500, 3300, 25)
+    V2g, Pg   = np.meshgrid(V2_vals, Pref_vals)
+    extent    = [V2_vals[0], V2_vals[-1],
+                 Pref_vals[0]/1000, Pref_vals[-1]/1000]
+    dab       = DABPhysics()
+
+    n_variants = len(results)
+    fig, axes  = plt.subplots(n_variants, 4,
+                               figsize=(18, 3.8 * n_variants),
+                               squeeze=False)
+    fig.suptitle(
+        f"Ablation Study — Full Operating-Range Heatmaps  ({title})\n"
+        f"V1={V1_FIXED:.0f}V  |  V2∈[{V2_vals[0]:.0f},{V2_vals[-1]:.0f}]V  |  "
+        f"P∈[{Pref_vals[0]/1000:.1f},{Pref_vals[-1]/1000:.1f}]kW  |  Grid:25×25",
+        fontsize=11, y=1.01)
+
+    col_titles = ["(a) Power Error |ΔP|/P_ref (%)",
+                  "(b) I_rms (A)",
+                  "(c) ZVS Violation\n0=OK, 1=lost",
+                  "(d) TPS Prediction Error\nmean|φ_PITNN−φ_solver| (°)"]
+    col_cmaps  = ["RdYlGn_r", "plasma", "RdYlGn_r", "YlOrRd"]
+    col_vlims  = [(0, 15), (None, None), (0, 1), (0, None)]
+
+    for row_idx, r in enumerate(results):
+        model = r["_model"]; model.eval()
+        P_err_map   = np.full_like(V2g, np.nan)
+        Irms_map    = np.full_like(V2g, np.nan)
+        ZVS_map     = np.zeros_like(V2g)
+        phi_err_map = np.full_like(V2g, np.nan)
+        print(f"    [{row_idx+1}/{n_variants}] {r['name']} ...")
+
+        with torch.no_grad():
+            for i in range(V2g.shape[0]):
+                for j in range(V2g.shape[1]):
+                    V2   = float(V2g[i, j])
+                    Pref = float(Pg[i, j])
+                    dab.V1, dab.V2 = V1_FIXED, V2
+                    try:
+                        phi_sol = dab.solve_optimal_phi(Pref)
+                        v_ratio = V1_FIXED * V2 / (V1_NOM ** 2)
+                        iL_est  = v_ratio * 10.7 * float(phi_sol[2])
+                        feat = np.array([V1_FIXED, V2, iL_est,
+                                         float(phi_sol[0]), float(phi_sol[1]),
+                                         float(phi_sol[2]), Pref, v_ratio],
+                                        dtype=np.float32)
+                        feat_norm = ((feat - mu) / sigma).astype(np.float32)
+                        x   = torch.from_numpy(
+                            np.tile(feat_norm, (1, 20, 1))).float().to(device)
+                        out = model(x).squeeze().cpu().numpy()
+                        phi_pit = (float(out[0]), float(out[1]), float(out[2]))
+                        P_pit   = dab.compute_power(*phi_pit)
+                        P_err_map[i, j]   = abs(P_pit-Pref)/max(Pref,1)*100
+                        Irms_map[i, j]    = dab.compute_irms(*phi_pit)
+                        zvs_ok, _         = dab.check_zvs(*phi_pit)
+                        ZVS_map[i, j]     = 0 if zvs_ok else 1
+                        phi_err_map[i, j] = float(np.degrees(np.mean(
+                            np.abs(np.array(phi_pit)-np.array(phi_sol)))))
+                    except Exception:
+                        pass
+
+        maps = [P_err_map, Irms_map, ZVS_map, phi_err_map]
+        for col_idx, (data, cmap, vlim) in enumerate(
+                zip(maps, col_cmaps, col_vlims)):
+            ax = axes[row_idx][col_idx]
+            im = ax.imshow(data, origin="lower", extent=extent,
+                           aspect="auto", cmap=cmap,
+                           vmin=vlim[0], vmax=vlim[1])
+            div = make_axes_locatable(ax)
+            cax = div.append_axes("right", size="5%", pad=0.06)
+            fig.colorbar(im, cax=cax).ax.tick_params(labelsize=7)
+            if col_idx == 2:
+                try:
+                    ax.contour(V2g, Pg/1000, data, levels=[0.5],
+                               colors=["k"], linewidths=1.2)
+                except Exception:
+                    pass
+            ax.axvline(250, color="white", lw=0.9, ls=":", alpha=0.7)
+            ax.set_xlabel("V2 (V)", fontsize=7)
+            if col_idx == 0:
+                ax.set_ylabel(f"{r['name']}\nP_ref (kW)",
+                              fontsize=7, fontweight="bold")
+            else:
+                ax.set_ylabel("P_ref (kW)", fontsize=7)
+            ax.tick_params(labelsize=6)
+            if row_idx == 0:
+                ax.set_title(col_titles[col_idx], fontsize=8)
+
+    dab.V1, dab.V2 = V1_NOM, V2_NOM
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=150, bbox_inches="tight")
+    plt.close()
+    print(f"  Saved: {save_path}")
+
+
 def build_all_models():
     """Return a list of (model_instance, name, physics_loss, kwargs) tuples."""
     pitnn_kw = dict(d_in=8, d_model=128, n_heads=8, n_layers=4,
@@ -935,6 +1099,12 @@ def main():
                  train_path="pitnn_ablation_training.png",
                  angle_path="pitnn_ablation_perangle.png")
 
+    print(f"\n  Building operating-range heatmaps "
+          f"(25×25 × {len(results_syn)} variants) ...")
+    plot_ablation_heatmaps(results_syn, mu, sigma, device,
+                           title="Synthetic Only",
+                           save_path="pitnn_ablation_heatmaps.png")
+
     # ── [5] SYNTHETIC + VIDEO training pass (only if --video supplied) ────
     if args.video and video_X_norm is not None:
         # Use the same test set as the synthetic pass so results are
@@ -974,6 +1144,10 @@ def main():
                      train_path="pitnn_ablation_video_training.png",
                      angle_path="pitnn_ablation_video_perangle.png")
         plot_video_comparison(results_syn, results_vid)
+        print(f"\n  Building operating-range heatmaps (video pass) ...")
+        plot_ablation_heatmaps(results_vid, mu, sigma, device,
+                               title="Synthetic + Video",
+                               save_path="pitnn_ablation_video_heatmaps.png")
 
         # Print delta table — how much does video augmentation help each model
         print("\n" + "=" * 80)
