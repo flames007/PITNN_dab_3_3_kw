@@ -17,11 +17,22 @@ phi3 = tps_clamp(phi3, 0.0, TPS_TWO_PI);
    Primary right leg     = phi1
    Secondary left leg    = phi3
    Secondary right leg   = phi3 + phi2
-*/
+
 tps_leg_gates(CurrentTime, 0.0,         &pL_u, &pL_l);
 tps_leg_gates(CurrentTime, phi1,        &pR_u, &pR_l);
 tps_leg_gates(CurrentTime, phi3,        &sL_u, &sL_l);
 tps_leg_gates(CurrentTime, phi3 + phi2, &sR_u, &sR_l);
+*/
+/*
+tps_leg_gates(CurrentTime, 0.0,          &pL_u, &pL_l);
+tps_leg_gates(CurrentTime, phi1,         &pR_u, &pR_l);
+tps_leg_gates(CurrentTime, -phi3,        &sL_u, &sL_l);
+tps_leg_gates(CurrentTime, -phi3 + phi2, &sR_u, &sR_l);
+*/
+tps_leg_gates(CurrentTime, 0.0,          &pL_u, &pL_l);
+tps_leg_gates(CurrentTime, phi1,         &pR_u, &pR_l);
+tps_leg_gates(CurrentTime, -phi3,        &sL_u, &sL_l);
+tps_leg_gates(CurrentTime, -phi3 + phi2, &sR_u, &sR_l);
 
 /* Output order matched to your MOSFET names. */
 OutputSignal(0, 0) = pL_u;   /* FETD  */
