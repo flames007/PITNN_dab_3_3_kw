@@ -178,21 +178,72 @@ static void do_start(void)
 static void do_output(double V1_raw, double V2_raw,
                       double I_out_raw, double P_ref_raw)
 {
-    double V1, V2, I_out, P_ref;
+    double V1_send;
+    double V2_send;
+    double I_out_send;
+    double P_ref_send;
+    double P_measured_raw;
 
-    V1    = clamp_val(V1_raw,    V1_LO, V1_HI);
-    V2    = clamp_val(V2_raw,    V2_LO, V2_HI);
-    I_out = (I_out_raw < 0.0) ? 0.0 : I_out_raw;
-    P_ref = clamp_val(P_ref_raw, P_MIN, P_MAX);
+    /*
+     * IMPORTANT:
+     * Use RAW V2 and RAW output current for measured power.
+     * Do NOT use the clamped neural-network voltage for P_meas.
+     */
+
+    V1_send = V1_raw;
+    V2_send = V2_raw;
+
+    /*
+     * Your current simulation is unidirectional load power.
+     * If the measured current goes negative because of sensor orientation,
+     * force it positive/zero for now.
+     */
+    I_out_send = (I_out_raw < 0.0) ? 0.0 : I_out_raw;
+
+    /*
+     * Keep the external power reference inside the trained/control range.
+     */
+    P_ref_send = clamp_val(P_ref_raw, P_MIN, P_MAX);
+
+    /*
+     * This is the TRUE measured output power from the PLECS plant.
+     * Example:
+     * V2_raw = 100 V, I_out = 2.65 A -> P_measured_raw = 265 W.
+     */
+    P_measured_raw = V2_raw * I_out_send;
+
+    if (P_measured_raw < 0.0) {
+        P_measured_raw = 0.0;
+    }
+
+    /*
+     * Store true measured power locally so Scope11 output 4 is correct,
+     * even if the server still returns a clamped/incorrect value.
+     */
+    g_p_meas = P_measured_raw;
 
     if (g_connected) {
-        if (server_query(V1, V2, I_out, P_ref)) {
+        /*
+         * Send RAW V1 and RAW V2 to the server.
+         * The server should clamp only internally for the PITNN input,
+         * not for physical P_meas calculation.
+         */
+        if (server_query(V1_send, V2_send, I_out_send, P_ref_send)) {
             g_errors = 0;
+
+            /*
+             * Force the displayed P_meas to remain the true plant power.
+             * The server may still return its own pm value, but this prevents
+             * Scope11 from showing the clamped-voltage value.
+             */
+            g_p_meas = P_measured_raw;
         } else {
             g_errors++;
-            if (g_errors == 1)
+            if (g_errors == 1) {
                 printf("[CScript] Server query failed at call %d\n",
                        g_calls);
+            }
+
             if (g_errors > 20) {
                 sock_close(g_sock);
                 g_sock      = SOCK_INVALID;
@@ -201,6 +252,7 @@ static void do_output(double V1_raw, double V2_raw,
             }
         }
     }
+
     g_calls++;
 }
 
