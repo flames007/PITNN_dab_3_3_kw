@@ -232,34 +232,49 @@ class PITNNServer:
                         )
                         continue
 
-                    # ── Clamp inputs ──────────────────────────────────────────
-                    V1        = float(np.clip(V1, 360.0, 440.0))
-                    V2        = float(np.clip(V2, 220.0, 280.0))
-                    I_out     = float(max(I_out, 0.0))
-                    P_ref_ext = float(np.clip(P_ref_ext, 500.0, 3300.0))
+                    # ── Separate RAW plant measurements from NN-safe inputs ─────
+                    # Raw values are the actual PLECS sensor values. These must be used
+                    # for physical delivered-power feedback.
+                    V1_raw        = float(V1)
+                    V2_raw        = float(V2)
+                    I_out_raw     = float(I_out)
+                    P_ref_ext_raw = float(P_ref_ext)
 
-                    # ── Measure delivered power ───────────────────────────────
-                    P_measured = V2 * I_out
+                    # Use the raw output voltage/current to measure actual delivered power.
+                    # Do NOT compute P_measured using the clamped V2_nn value; that was the
+                    # reason P_meas stayed around 220*Iout even when Vout collapsed below 220 V.
+                    I_out_meas = max(I_out_raw, 0.0)
+                    P_measured = V2_raw * I_out_meas
+                    if P_measured < 0.0:
+                        P_measured = 0.0
 
-                    # ── PI correction ─────────────────────────────────────────
+                    # Clamp only the values that are sent into the trained PITNN/DABPhysics
+                    # model. This keeps the NN inside its training range without corrupting
+                    # the physical power feedback.
+                    V1_nn     = float(np.clip(V1_raw, 360.0, 440.0))
+                    V2_nn     = float(np.clip(V2_raw, 220.0, 280.0))
+                    I_out_nn  = I_out_meas
+                    P_ref_ext = float(np.clip(P_ref_ext_raw, 500.0, 3300.0))
+
+                    # ── PI correction uses TRUE measured output power ──────────
                     P_ref_corr = pi.step(P_ref_ext, P_measured)
 
                     # ── Prime controller on first call ────────────────────────
-                    dab.V1, dab.V2 = V1, V2
+                    dab.V1, dab.V2 = V1_nn, V2_nn
                     if not primed:
                         phi_seed = dab.solve_optimal_phi(P_ref_corr)
                         ctrl.reset()
-                        ctrl.prime(V1, V2, P_ref_corr, phi_seed)
+                        ctrl.prime(V1_nn, V2_nn, P_ref_corr, phi_seed)
                         phi_cur = phi_seed
                         # Warm-up steps
                         for _ in range(self.n_warmup):
-                            r = ctrl.step(V1, V2, None, P_ref_corr, phi_cur)
+                            r = ctrl.step(V1_nn, V2_nn, None, P_ref_corr, phi_cur)
                             phi_cur = r["phi_TPS"]
                         primed = True
 
                     # ── PITNN forward pass ────────────────────────────────────
                     t0 = time.perf_counter()
-                    r  = ctrl.step(V1, V2, None, P_ref_corr, phi_cur)
+                    r  = ctrl.step(V1_nn, V2_nn, None, P_ref_corr, phi_cur)
                     inf_us = (time.perf_counter() - t0) * 1e6
 
                     phi_cur = r["phi_TPS"]
