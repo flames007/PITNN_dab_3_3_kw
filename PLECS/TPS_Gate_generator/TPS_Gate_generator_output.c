@@ -1,48 +1,23 @@
 double phi1 = InputSignal(0, 0);
-double phi2 = InputSignal(1, 0);
-double phi3 = InputSignal(2, 0);
+double phi2 = InputSignal(0, 1);
+double phi3 = InputSignal(0, 2);
 
-double pL_u, pL_l;
-double pR_u, pR_l;
-double sL_u, sL_l;
-double sR_u, sR_l;
+double d1 = (phi1 / TWO_PI) * TSW;
+double d2 = (phi2 / TWO_PI) * TSW;
+double d3 = (phi3 / TWO_PI) * TSW;
 
-/* Keep angles in a valid range. */
-phi1 = tps_clamp(phi1, 0.0, TPS_TWO_PI);
-phi2 = tps_clamp(phi2, 0.0, TPS_TWO_PI);
-phi3 = tps_clamp(phi3, 0.0, TPS_TWO_PI);
+int pL = square_state(CurrentTime);
+int pR = square_state(CurrentTime - d1);
 
-/* TPS phase convention:
-   Primary left leg      = 0
-   Primary right leg     = phi1
-   Secondary left leg    = phi3
-   Secondary right leg   = phi3 + phi2
+int sL = square_state(CurrentTime + d3);
+int sR = square_state(CurrentTime + d3 - d2);
 
-tps_leg_gates(CurrentTime, 0.0,         &pL_u, &pL_l);
-tps_leg_gates(CurrentTime, phi1,        &pR_u, &pR_l);
-tps_leg_gates(CurrentTime, phi3,        &sL_u, &sL_l);
-tps_leg_gates(CurrentTime, phi3 + phi2, &sR_u, &sR_l);
-*/
-/*
-tps_leg_gates(CurrentTime, 0.0,          &pL_u, &pL_l);
-tps_leg_gates(CurrentTime, phi1,         &pR_u, &pR_l);
-tps_leg_gates(CurrentTime, -phi3,        &sL_u, &sL_l);
-tps_leg_gates(CurrentTime, -phi3 + phi2, &sR_u, &sR_l);
-*/
-tps_leg_gates(CurrentTime, 0.0,          &pL_u, &pL_l);
-tps_leg_gates(CurrentTime, phi1,         &pR_u, &pR_l);
-tps_leg_gates(CurrentTime, -phi3,        &sL_u, &sL_l);
-tps_leg_gates(CurrentTime, -phi3 + phi2, &sR_u, &sR_l);
+OutputSignal(0, 0) = pL;
+OutputSignal(1, 0) = 1 - pL;
+OutputSignal(2, 0) = pR;
+OutputSignal(3, 0) = 1 - pR;
 
-/* Output order matched to your MOSFET names. */
-OutputSignal(0, 0) = pL_u;   /* FETD  */
-OutputSignal(1, 0) = pL_l;   /* FETD1 */
-
-OutputSignal(2, 0) = pR_u;   /* FETD2 */
-OutputSignal(3, 0) = pR_l;   /* FETD3 */
-
-OutputSignal(4, 0) = sL_u;   /* FETD4 */
-OutputSignal(5, 0) = sL_l;   /* FETD5 */
-
-OutputSignal(6, 0) = sR_u;   /* FETD7 */
-OutputSignal(7, 0) = sR_l;   /* FETD6 */
+OutputSignal(4, 0) = sL;
+OutputSignal(5, 0) = 1 - sL;
+OutputSignal(6, 0) = sR;
+OutputSignal(7, 0) = 1 - sR;
