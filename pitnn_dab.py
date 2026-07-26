@@ -1,13 +1,12 @@
 """
 ============================================================
-Physics-Informed Transformer Neural Network (PITNN)
-for Real-Time Triple Phase Shift (TPS) Optimal Modulation
-in Dual Active Bridge (DAB) Converters
+A Waveform-Augmented Physics-Informed Transformer Neural Network Surrogate for
+Real-Time-Capable Triple-Phase-Shift Optimization in Dual-Active-Bridge Converters
 ============================================================
 
-Paper: "Physics-Informed Transformer Neural Network Control for
-        Real-Time Triple Phase Shift Optimal Modulation in
-        Dual Active Bridge Converters" — Chukwuemeka Nzeadibe,
+Paper: "A Waveform-Augmented Physics-Informed Transformer Neural Network Surrogate for
+        Real-Time-Capable Triple-Phase-Shift Optimization in Dual-Active-Bridge Converters
+        " — Chukwuemeka Nzeadibe,
         Mississippi State University, 2026.
 
 Requirements:  pip install torch numpy matplotlib scipy opencv-python
@@ -38,14 +37,6 @@ Hardware compatibility
   PLECS / LTspice / PSIM waveform windows — all supported
   Multi-channel captures (CH1=vab, CH2=nvcd, CH3=iL) — auto-detected
 ============================================================
-
-High-power configuration (10kW–80kW):
-  V1=V2=800V, n=1.0, Lk=10µH, fsw=100kHz → P_max=80kW
-  Operating range: 5kW–70kW  (P_min≈3kW physics floor)
-  All three TPS angles predicted by the PITNN:
-    phi1 ∈ [PHI12_MIN, PHI12_MAX] rad  (primary inner duty)
-    phi2 ∈ [PHI12_MIN, PHI12_MAX] rad  (secondary inner duty)
-    phi3 ∈ [PHI_MIN,   PHI3_MAX]  rad  (external phase shift)
 """
 
 import math, time, warnings, argparse, random
