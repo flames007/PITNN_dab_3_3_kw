@@ -1,9 +1,9 @@
 /*
  * =====================================================================
- * PLECS C-Script — PITNN Inference Client (Option B: PI power control)
+ * PLECS C-Script — PITNN Inference Client PI power control)
  *
- * PASTE THIS ENTIRE FILE into the DECLARATIONS tab only.
- * The Start / Output / Terminate tabs have their own separate files.
+ * PASTE THIS ENTIRE FILE into the DECLARATIONS tab of the C-Script block.
+ * NOTE: The PLECS already provided in the folders already have this code in the DECLARATIONS tab.
  *
  * Block settings (Setup tab):
  *   Number of inputs  : 4

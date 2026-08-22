@@ -1,3 +1,8 @@
+/*
+ * PLECS C-Script — Gate generator Output Tab
+ * Paste this into the OUTPUT tab of the Gate generatorC-Script block.
+ * NOTE: The PLECS already provided in the folders already have this code in the OUTPUT tab.
+ */
 double phi1 = InputSignal(0, 0);
 double phi2 = InputSignal(0, 1);
 double phi3 = InputSignal(0, 2);

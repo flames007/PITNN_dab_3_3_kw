@@ -1,3 +1,8 @@
+/*
+ * PLECS C-Script — OUTPUT Tab
+ * NOTE: The PLECS already provided in the folders already have this code in the OUTPUT tab.
+ * Paste this into the OUTPUT tab of the C-Script block.
+ */
 double V1, V2, I_out, P_ref;
 
 V1    = InputSignal(0, 0);

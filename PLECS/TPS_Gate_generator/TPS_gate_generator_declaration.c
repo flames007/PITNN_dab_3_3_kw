@@ -1,3 +1,8 @@
+/*
+ * PLECS C-Script — Gate generator Declaration Tab
+ * Paste this into the Declaration tab of the Gate generatorC-Script block.
+ * NOTE: The PLECS already provided in the folders already have this code in the Declaration tab.
+ */
 #include <math.h>
 
 #define FSW     100000.0

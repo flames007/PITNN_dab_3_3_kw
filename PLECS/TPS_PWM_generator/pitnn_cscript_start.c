@@ -1,6 +1,7 @@
 /*
  * PLECS C-Script — Start Tab
  * Paste this into the START tab of the C-Script block.
+ * NOTE: The PLECS already provided in the folders already have this code in the START tab.
  * PLECS wraps this in void Start(void) { ... } automatically.
  * ─────────────────────────────────────────────────────────────────
  * All logic is delegated to do_start() defined in Declarations.

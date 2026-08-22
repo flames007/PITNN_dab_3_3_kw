@@ -2,8 +2,6 @@
 pitnn_plecs_server.py
 =====================================================================
 PITNN Inference Server for PLECS Co-Simulation
-Option B: PI regulates delivered power P_measured = V2 × I_out
-          PI output → P_ref_corrected → PITNN → (φ1, φ2, φ3)
 
 Signal flow:
     PLECS sends:  [V1, V2, I_out, P_ref_ext]   (4 floats, CSV over TCP)
@@ -20,15 +18,15 @@ Usage:
     python pitnn_plecs_server.py --checkpoint pitnn_dab_checkpoint.pt
     python pitnn_plecs_server.py --port 9876 --warmup 10 --device cuda
 
-Converter spec:
+DAB Converter spec:
     V1=400V, V2=250V, n=1.6, Lk=40µH, fsw=100kHz, P_rated=3.3kW
 =====================================================================
 """
 
 import os as _os
 _DEFAULT_CKPT = _os.path.join(
-    _os.path.dirname(_os.path.abspath(__file__)),   # folder this script lives in
-    "..",                                            # one level up
+    _os.path.dirname(_os.path.abspath(__file__)), 
+    "..",                                            
     "pitnn_dab_checkpoint.pt"
 )
 import argparse
@@ -57,7 +55,7 @@ from pitnn_dab import (
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
-# PI CONTROLLER  (runs inside the server, Option B)
+# PI CONTROLLER  (runs inside the server)
 # ─────────────────────────────────────────────────────────────────────────────
 
 class PowerPI:
@@ -241,8 +239,6 @@ class PITNNServer:
                     P_ref_ext_raw = float(P_ref_ext)
 
                     # Use the raw output voltage/current to measure actual delivered power.
-                    # Do NOT compute P_measured using the clamped V2_nn value; that was the
-                    # reason P_meas stayed around 220*Iout even when Vout collapsed below 220 V.
                     I_out_meas = max(I_out_raw, 0.0)
                     P_measured = V2_raw * I_out_meas
                     if P_measured < 0.0:
@@ -321,7 +317,7 @@ class PITNNServer:
         self._server.listen(1)
 
         print(f"\n{'='*60}")
-        print(f"  PITNN PLECS Server — Option B (PI power regulation)")
+        print(f"  PITNN PLECS Server — (PI power regulation)")
         print(f"  Listening on {self.host}:{self.port}")
         print(f"  Converter: V1={V1_NOM:.0f}V / V2={V2_NOM:.0f}V / "
               f"P_rated={P_RATED:.0f}W / fsw={FSW/1e3:.0f}kHz")
@@ -351,7 +347,7 @@ class PITNNServer:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="PITNN PLECS Inference Server — Option B PI power control")
+        description="PITNN PLECS Inference Server — (PI power regulation)")
     parser.add_argument("--checkpoint", default=_DEFAULT_CKPT,
                         help="Path to trained PITNN checkpoint "
                              "(default: ../pitnn_dab_checkpoint.pt relative to this script)")

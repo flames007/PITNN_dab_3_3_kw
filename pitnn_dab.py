@@ -29,13 +29,7 @@ The VideoWaveformExtractor automatically:
   5. Builds a MeasurementDataset of (sequence, phi_TPS) pairs
   6. Trains a VideoConsistencyLoss alongside the synthetic dataset
 
-To swap in a new video: just change the --video path. No code changes needed.
-
-Hardware compatibility
-  Tektronix / Rigol / Keysight oscilloscopes — direct screen recording
-  MATLAB/Simulink scope windows — simulation output video
-  PLECS / LTspice / PSIM waveform windows — all supported
-  Multi-channel captures (CH1=vab, CH2=nvcd, CH3=iL) — auto-detected
+To swap in a new video: just change the --video path.
 ============================================================
 """
 
@@ -95,7 +89,7 @@ class VideoWaveformExtractor:
         dataset   = extractor.build_dataset()   # returns MeasurementDataset
         # Then pass dataset to train_pitnn(..., video_dataset=dataset)
 
-    To use a new video: just change the path. No other code changes needed.
+    To use a new video: just change the path.
 
     Extraction algorithm
     ────────────────────
@@ -716,7 +710,6 @@ class PITNN(nn.Module):
 
 class PITNNLoss(nn.Module):
     """
-    Weighted MSE with optional physics terms (Eq.33-37).
     All three angles are now free — weights [2,2,3]: phi3 gets highest
     weight (drives power), phi1/phi2 get equal weight (drive ZVS/duty).
     A soft symmetry penalty encourages phi1≈phi2 (symmetric bridges).
