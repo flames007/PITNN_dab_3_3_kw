@@ -1,6 +1,6 @@
 """
-Paper: "A Waveform-Augmented Physics-Informed Transformer Neural Network Surrogate for
-        Real-Time-Capable Triple-Phase-Shift Optimization in Dual-Active-Bridge Converters
+Paper: "A Waveform-Augmented Physics-Informed Transformer Neural Network Surrogate 
+        for Triple-Phase-Shift Optimization in Dual-Active-Bridge Converters
         " — Chukwuemeka Nzeadibe,
         Mississippi State University, 2026.
 """

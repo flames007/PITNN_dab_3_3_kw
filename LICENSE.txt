@@ -1,8 +1,8 @@
 PITNN DAB CONVERTER — PROPRIETARY SOFTWARE LICENCE
 =========================================================================
 
-Physics-Informed Transformer Neural Network for Real-Time Triple Phase
-Shift Optimal Modulation in Dual Active Bridge Converters
+A Waveform-Augmented Physics-Informed Transformer Neural Network Surrogate 
+for Triple-Phase-Shift Optimization in Dual-Active-Bridge Converters
 
 Copyright (c) 2026 Chukwuemeka Nzeadibe
 Mississippi State University, Department of Electrical & Computer Engineering
