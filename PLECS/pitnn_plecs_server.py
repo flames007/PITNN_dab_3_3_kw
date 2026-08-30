@@ -1,6 +1,4 @@
 """
-pitnn_plecs_server.py
-=====================================================================
 PITNN Inference Server for PLECS Co-Simulation
 
 Signal flow:
@@ -20,7 +18,6 @@ Usage:
 
 DAB Converter spec:
     V1=400V, V2=250V, n=1.6, Lk=40µH, fsw=100kHz, P_rated=3.3kW
-=====================================================================
 """
 
 import os as _os
@@ -54,10 +51,7 @@ from pitnn_dab import (
     P_RATED,
 )
 
-# ─────────────────────────────────────────────────────────────────────────────
 # PI CONTROLLER  (runs inside the server)
-# ─────────────────────────────────────────────────────────────────────────────
-
 class PowerPI:
     """
     Discrete PI controller that corrects the external power reference
@@ -121,10 +115,7 @@ class PowerPI:
         return float(np.clip(P_corr, self.P_min, self.P_max))
 
 
-# ─────────────────────────────────────────────────────────────────────────────
 # INFERENCE SERVER
-# ─────────────────────────────────────────────────────────────────────────────
-
 class PITNNServer:
     """
     TCP server that wraps the PITNN controller and PowerPI for PLECS.
@@ -341,10 +332,7 @@ class PITNNServer:
             self._server.close()
 
 
-# ─────────────────────────────────────────────────────────────────────────────
 # ENTRY POINT
-# ─────────────────────────────────────────────────────────────────────────────
-
 def main():
     parser = argparse.ArgumentParser(
         description="PITNN PLECS Inference Server — (PI power regulation)")

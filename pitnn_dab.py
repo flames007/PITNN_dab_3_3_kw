@@ -1,36 +1,8 @@
 """
-============================================================
-A Waveform-Augmented Physics-Informed Transformer Neural Network Surrogate for
-Real-Time-Capable Triple-Phase-Shift Optimization in Dual-Active-Bridge Converters
-============================================================
-
 Paper: "A Waveform-Augmented Physics-Informed Transformer Neural Network Surrogate for
         Real-Time-Capable Triple-Phase-Shift Optimization in Dual-Active-Bridge Converters
         " — Chukwuemeka Nzeadibe,
         Mississippi State University, 2026.
-
-Requirements:  pip install torch numpy matplotlib scipy opencv-python
-Run:           python pitnn_dab.py
-Run with video: python pitnn_dab.py --video path/to/scope_video.mp4
-
-============================================================
-VIDEO INGESTION PIPELINE
-============================================================
-Drop any oscilloscope or simulation screen-recording video into
-the training pipeline without modifying any model code:
-
-    python pitnn_dab.py --video my_scope_capture.mp4
-
-The VideoWaveformExtractor automatically:
-  1. Detects the waveform display region in each frame
-  2. Separates individual signal panels (vab, nvcd, iL, gate signals)
-  3. Extracts normalised waveform traces column-by-column
-  4. Estimates TPS parameters (phi1, phi3) from duty cycle + phase lag
-  5. Builds a MeasurementDataset of (sequence, phi_TPS) pairs
-  6. Trains a VideoConsistencyLoss alongside the synthetic dataset
-
-To swap in a new video: just change the --video path.
-============================================================
 """
 
 import math, time, warnings, argparse, random
@@ -48,10 +20,8 @@ warnings.filterwarnings("ignore")
 torch.manual_seed(42)
 np.random.seed(42)
 
-# ─────────────────────────────────────────────────────────────────────────────
 # CONSTANTS  (Table II)
 # V1=400V, V2=250V, n=1.6, Lk=40µH, fsw=100kHz → P_max≈5kW, P_rated=3.3kW
-# ─────────────────────────────────────────────────────────────────────────────
 V1_NOM      = 400.0          # Primary bus voltage         (V)
 V2_NOM      = 250.0          # Secondary bus voltage       (V)
 FSW         = 100e3          # Switching frequency         (Hz)
@@ -71,25 +41,10 @@ B_POWER     = PI             # Power peaks at φ3 = B/2 ≈ π/2
 PHI3_PEAK   = B_POWER / 2.0
 
 
-# ═════════════════════════════════════════════════════════════════════════════
-# VIDEO INGESTION PIPELINE  ← plug any scope/simulation video in here
-# ═════════════════════════════════════════════════════════════════════════════
-
+# VIDEO INGESTION PIPELINE
 class VideoWaveformExtractor:
     """
     Extracts TPS modulation parameters from oscilloscope or simulation videos.
-
-    Works with any screen-recording that shows waveform traces on a dark
-    background — oscilloscope hardware captures, MATLAB/Simulink scope
-    windows, PLECS, LTspice, or PSIM output videos.
-
-    Usage
-    ─────
-        extractor = VideoWaveformExtractor("scope_video.mp4")
-        dataset   = extractor.build_dataset()   # returns MeasurementDataset
-        # Then pass dataset to train_pitnn(..., video_dataset=dataset)
-
-    To use a new video: just change the path.
 
     Extraction algorithm
     ────────────────────
@@ -106,8 +61,7 @@ class VideoWaveformExtractor:
     7. Invert the power model to get the implied Pref for each frame.
     8. Assemble into (sequence, phi_TPS_label) training pairs.
     """
-
-    # ── Layout constants ──────────────────────────────────────────────────────
+    
     ROI_Y1, ROI_Y2 = 100, 980    # waveform display rows (calibrated from video)
     ROI_X1, ROI_X2 = 150, 1490   # waveform display columns
     FRAME_STEP      = 3           # process every Nth frame
@@ -130,7 +84,7 @@ class VideoWaveformExtractor:
         if self.verbose:
             print(f"  [VideoExtractor] {msg}")
 
-    # ── Step 1: Detect ROI and panels from a reference frame ─────────────────
+    # ── Step 1: Detect ROI and panels from a reference frame
     def _detect_panels(self, gray_roi):
         """
         Find horizontal panel boundaries by detecting rows with low brightness
@@ -149,7 +103,7 @@ class VideoWaveformExtractor:
                 panels.append((boundaries[i], boundaries[i+1]))
         return panels
 
-    # ── Step 2: Classify panels ───────────────────────────────────────────────
+    # ── Step 2: Classify panels
     def _classify_panels(self, gray_roi, panels):
         """
         Classify each panel as SQUARE (voltage/gate) or SMOOTH (current/filtered).
@@ -167,7 +121,7 @@ class VideoWaveformExtractor:
             types.append("SQUARE" if is_square else "SMOOTH")
         return types
 
-    # ── Step 3: Extract normalised trace from one panel ───────────────────────
+    # ── Step 3: Extract normalised trace from one panel
     def _extract_trace(self, panel_gray, panel_height):
         """
         For each column, find y-centroid of bright pixels.
@@ -183,7 +137,7 @@ class VideoWaveformExtractor:
                 signal[x] = panel_height / 2.0
         return 1.0 - 2.0 * signal / max(panel_height, 1)
 
-    # ── Step 4: Estimate TPS parameters from a pair of traces ─────────────────
+    # ── Step 4: Estimate TPS parameters from a pair of traces
     def _estimate_phi(self, sq_trace, sm_trace):
         """
         phi1 from duty cycle of square trace.
@@ -205,7 +159,7 @@ class VideoWaveformExtractor:
 
         return phi1, phi3
 
-    # ── Step 5: Invert power model to get implied Pref ────────────────────────
+    # ── Step 5: Invert power model to get implied Pref
     def _phi3_to_pref(self, phi1, phi3):
         """
         P = K*(phi1/π)*phi3*(1-phi3/B) * (V1*V2/Vnom²)
@@ -214,7 +168,7 @@ class VideoWaveformExtractor:
         P = K_POWER * (phi1 / PI) * phi3 * (1.0 - phi3 / B_POWER) * v_scale
         return float(np.clip(P, 100.0, 80000.0))
 
-    # ── Main extraction method ────────────────────────────────────────────────
+    # ── Main extraction method
     def extract(self):
         """
         Process all video frames and return list of measurement dicts:
@@ -257,7 +211,7 @@ class VideoWaveformExtractor:
 
         self._log(f"Video: {total} frames @ {fps:.1f}fps = {total/fps:.1f}s")
 
-        # ── Detect panels from reference frame ─────────────────────────────
+        # ── Detect panels from reference frame
         ref_idx = min(150, total // 3)
         cap.set(cv2.CAP_PROP_POS_FRAMES, ref_idx)
         ret, ref_frame = cap.read()
@@ -350,7 +304,7 @@ class VideoWaveformExtractor:
         self._log(f"Extracted {len(measurements)} measurement frames")
         return measurements
 
-    # ── Build dataset ─────────────────────────────────────────────────────────
+    # ── Build dataset
     def build_dataset(self, mu=None, sigma=None):
         """
         Extract measurements and convert to a TensorDataset compatible with
@@ -437,7 +391,7 @@ class VideoWaveformExtractor:
         self._log(f"Pref range: [{X_raw[:,-1,6].min():.0f}, {X_raw[:,-1,6].max():.0f}] W")
         return X_norm, Y, mu.squeeze(), sigma.squeeze(), X_raw
 
-    # ── Diagnostic plot ───────────────────────────────────────────────────────
+    # ── Diagnostic plot
     def plot_extraction(self, save_path="video_extraction.png"):
         """Save a diagnostic plot of the extracted waveform parameters."""
         measurements = self.extract()
@@ -462,9 +416,7 @@ class VideoWaveformExtractor:
         print(f"  Saved: {save_path}")
 
 
-# ═════════════════════════════════════════════════════════════════════════════
-# §II  DAB CONVERTER PHYSICS
-# ═════════════════════════════════════════════════════════════════════════════
+# DAB CONVERTER PHYSICS
 
 class DABPhysics:
     def __init__(self, V1=V1_NOM, V2=V2_NOM, n=N_TURNS, Lk=LK, fsw=FSW):
@@ -553,19 +505,6 @@ class DABPhysics:
         Uses _score_fast() (one N=200 simulation) for scoring instead of
         separate compute_irms() + check_zvs() (two N=600 simulations).
         Grid reduced to 7 candidates. Saves ~60% of dataset generation time.
-
-        Low-power note
-        --------------
-        Below 10kW, phi3 solutions are very small (<0.05 rad). N=300
-        simulations have quantisation error at small phi3, causing brentq
-        to see a flat power function. N_brentq=500 is used below 10kW
-        to resolve these small phase windows correctly.
-
-        ZVS note
-        --------
-        At V2 > V1 by more than ~5%, ZVS requires phi12 > pi rad which is
-        outside the TPS range. The solver minimises ZVS penalty in those
-        cases. This is a hardware physics constraint.
         """
         # Adaptive phi12 floor: scales with V2/V1 so high-V2 conditions
         # search lower phi12 values where ZVS penalty is smallest
@@ -594,7 +533,7 @@ class DABPhysics:
 
             Pref_c = float(min(Pref, P_hi * 0.97))
 
-            # Capture phi12 for the lambda to avoid closure-over-loop-variable bug
+            # Capture phi12 for the lambda to avoid closure-over-loop-variable
             _phi12 = phi12
             def _pfast(p, phi12=_phi12):
                 _,vab,_,_,iL = self.simulate_current(phi12, phi12, max(p, 0.001), N_pts=N_brentq)
@@ -652,10 +591,8 @@ class DABPhysics:
         return best_phi
 
 
-# ═════════════════════════════════════════════════════════════════════════════
-# §V-B  PITNN ARCHITECTURE
-# ═════════════════════════════════════════════════════════════════════════════
 
+# PITNN ARCHITECTURE
 class PositionalEncoding(nn.Module):
     def __init__(self,d_model,max_len=128,dropout=0.1):
         super().__init__(); self.dropout=nn.Dropout(dropout)
@@ -669,7 +606,7 @@ class PositionalEncoding(nn.Module):
 
 class PITNN(nn.Module):
     """
-    Physics-Informed Transformer (§V-B, Fig.2, Eq.29-32).
+    Physics-Informed Transformer.
     d_in=8: [V1,V2,iL,φ1,φ2,φ3,Pref,V1V2/Vnom²]
     Output: all three TPS angles predicted independently:
       φ1 ∈ [PHI12_MIN, PHI12_MAX]  — primary bridge inner duty
@@ -704,10 +641,7 @@ class PITNN(nn.Module):
         return torch.cat([phi1, phi2, phi3], dim=1)  # (B, 3)
 
 
-# ═════════════════════════════════════════════════════════════════════════════
-# §V-C  LOSS FUNCTIONS
-# ═════════════════════════════════════════════════════════════════════════════
-
+# LOSS FUNCTIONS
 class PITNNLoss(nn.Module):
     """
     All three angles are now free — weights [2,2,3]: phi3 gets highest
@@ -749,10 +683,7 @@ class PITNNLoss(nn.Module):
                         "LP":LP.item(),"LI":0.,"LZVS":LZVS.item(),"L_physics":L_physics.item()}
 
 
-# ═════════════════════════════════════════════════════════════════════════════
-# §V-D  SYNTHETIC DATASET
-# ═════════════════════════════════════════════════════════════════════════════
-
+# SYNTHETIC DATASET
 def generate_dataset(n_samples=10000,seq_len=20,
                      V1_range=(360.,440.),V2_range=(220.,280.),
                      Pref_range=(500.,3300.),seed=42):
@@ -767,7 +698,7 @@ def generate_dataset(n_samples=10000,seq_len=20,
     print(f"  Generating {n_samples} synthetic samples (all 3 angles free) …")
     t0=time.perf_counter(); X_list,Y_list=[],[]; n_fb=0
 
-    # 30% of samples from the low-power region (3–12kW) to improve accuracy
+    # 30% of samples from the low-power region (500-1500W) to improve accuracy
     # near the physics floor where phi3 is very small and hard to predict.
     n_low = int(n_samples * 0.30)
     Pref_low_range  = (300., 1500.)
@@ -825,10 +756,7 @@ def generate_dataset(n_samples=10000,seq_len=20,
     return ((X_raw-mu)/sigma).astype(np.float32),Y,mu.squeeze(),sigma.squeeze(),X_raw
 
 
-# ═════════════════════════════════════════════════════════════════════════════
-# §V-D  TRAINING
-# ═════════════════════════════════════════════════════════════════════════════
-
+# TRAINING
 def train_pitnn(model,loss_fn,X_norm,X_raw,Y,epochs=150,batch_size=64,
                 lr=1e-4,val_split=.15,warmup_epochs=20,device="cpu",
                 video_X_norm=None,video_X_raw=None,video_Y=None):
@@ -842,7 +770,7 @@ def train_pitnn(model,loss_fn,X_norm,X_raw,Y,epochs=150,batch_size=64,
         The mixing weight is proportional to dataset sizes — no
         separate hyperparameter needed.
     """
-    # ── Optionally merge video data ───────────────────────────────────────
+    # ── Optionally merge video data
     if video_X_norm is not None and len(video_X_norm) > 0:
         X_norm_all = np.concatenate([X_norm, video_X_norm], axis=0)
         X_raw_all  = np.concatenate([X_raw,  video_X_raw],  axis=0)
@@ -911,7 +839,7 @@ def train_pitnn(model,loss_fn,X_norm,X_raw,Y,epochs=150,batch_size=64,
     return hist
 
 
-# ── Export for deployment ─────────────────────────────────────────
+# ── Export for deployment 
 import torch
 
 def export_model(model, mu, sigma, save_dir="."):
@@ -919,7 +847,6 @@ def export_model(model, mu, sigma, save_dir="."):
     model.eval()
     dummy_input = torch.zeros(1, 20, 8)  # (batch, seq_len, d_in)
 
-    # ── Option A: TorchScript ─────────────────────────────────────
     # Use train() to disable the fused TransformerEncoder fast path
     # which causes non-deterministic graph tracing (known PyTorch issue)
     model.train()
@@ -929,19 +856,6 @@ def export_model(model, mu, sigma, save_dir="."):
         model.eval()
     scripted.save(f"{save_dir}/pitnn_scripted.pt")
     print("Saved: pitnn_scripted.pt  (C++/embedded Linux/Jetson)")
-
-    # ── Option B: ONNX ────────────────────────────────────────────
-    torch.onnx.export(
-        model, dummy_input,
-        f"{save_dir}/pitnn_model.onnx",
-        input_names  = ["state_sequence"],
-        output_names = ["phi_TPS"],
-        dynamic_axes = {"state_sequence": {0: "batch"}},
-        opset_version = 17,
-        export_params = True,
-        do_constant_folding = True,
-    )
-    print("Saved: pitnn_model.onnx   (ONNX Runtime / TensorRT / MCU)")
 
     # ── Option C: Weight arrays ───────────────────────────────────
     state = model.state_dict()
@@ -958,10 +872,7 @@ def export_model(model, mu, sigma, save_dir="."):
     print(f"phi3 ∈ [{PHI_MIN:.3f},   {PHI3_MAX:.4f}]  rad")
 
 
-# ═════════════════════════════════════════════════════════════════════════════
-# §V-E  REAL-TIME CONTROLLER
-# ═════════════════════════════════════════════════════════════════════════════
-
+# REAL-TIME CONTROLLER
 class PITNNController:
     def __init__(self,model,mu,sigma,dab,device="cpu"):
         self.model=model.to(device).eval(); self.mu=mu.astype(np.float32)
@@ -1004,11 +915,7 @@ class PITNNController:
                 "mode":mode,"P_err_W":abs(P-Pref),
                 "P_err_pct":abs(P-Pref)/max(abs(Pref),1)*100,"inf_us":inf_us}
 
-
-# ═════════════════════════════════════════════════════════════════════════════
 # PLOTS
-# ═════════════════════════════════════════════════════════════════════════════
-
 def plot_all(hist,dab):
     ep=range(1,len(hist["train"])+1)
     fig,ax=plt.subplots(1,2,figsize=(12,4))
@@ -1106,10 +1013,7 @@ def plot_all(hist,dab):
     print("  Saved: pitnn_power_surface.png")
 
 
-# ═════════════════════════════════════════════════════════════════════════════
 # MAIN
-# ═════════════════════════════════════════════════════════════════════════════
-
 def plot_control_results(ctrl, dab):
     """
     Five control-oriented evaluation plots.
