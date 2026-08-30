@@ -78,29 +78,75 @@ Without prior Written Authorisation, no person may:
   (h) Use the dataset generation pipeline to train other models.
 
 =========================================================================
-SECTION 2 — LIMITED VIEWING PERMISSION
+SECTION 2 — PEER REVIEW AND ACADEMIC EVALUATION PERMISSION
 =========================================================================
 
-The Author grants the limited, non-exclusive, non-transferable,
-revocable right to VIEW the source code for the sole purpose of
-academic study and evaluation, subject to ALL of the following:
+The Author grants journal editors, assigned peer reviewers, and other
+persons formally involved in evaluating the associated research manuscript
+a limited, non-exclusive, non-transferable, revocable licence to access,
+copy as technically necessary, and execute the Software solely for the
+purpose of evaluating, verifying, or reproducing results reported in the
+associated manuscript.
 
-  1. No execution. You may not run or deploy the Software.
-  2. No copying beyond what is necessary to view it in a browser or
-     editor during a single session.
-  3. No distribution to any other person or organisation.
-  4. No modification of any file in any way.
-  5. Any academic work referencing these methods must include the
-     mandatory citation in Section 3 Condition A.
-  6. This permission may be revoked at any time without notice.
+This permission is subject to ALL of the following conditions:
+
+1. REVIEW PURPOSE ONLY.
+   The Software may be used only for peer review, manuscript evaluation,
+   reproducibility checking, or verification of results reported in the
+   associated manuscript.
+
+2. EXECUTION PERMITTED.
+   Reviewers and editors may run, execute, test, and evaluate the Software
+   and may generate outputs reasonably necessary to verify the reported
+   results.
+
+3. TEMPORARY COPIES PERMITTED.
+   Reviewers may create local or temporary copies of the Software only as
+   reasonably necessary to install, execute, test, or evaluate it.
+
+4. LIMITED TECHNICAL MODIFICATIONS PERMITTED.
+   Reviewers may make temporary configuration changes reasonably necessary
+   to execute the Software in their computing environment, including changes
+   to file paths, environment variables, dependency configuration, device
+   selection, and runtime parameters. Such changes may not be distributed
+   or used to create a separate Derivative Work.
+
+5. NO REDISTRIBUTION.
+   The Software, modified copies, trained models, datasets, or other
+   proprietary components may not be published, uploaded, shared, or
+   redistributed to persons who are not directly involved in the review
+   or evaluation.
+
+6. NO COMMERCIAL USE.
+   Permission granted under this Section does not authorize Commercial Use.
+
+7. NO USE OUTSIDE THE REVIEW.
+   The Software may not be used for unrelated research, development,
+   teaching, product development, patent development, or any purpose beyond
+   evaluation of the associated manuscript without separate Written
+   Authorisation.
+
+8. CONFIDENTIALITY.
+   Where the Software is provided as part of a confidential peer-review
+   process, reviewers shall treat the Software consistently with the
+   confidentiality requirements of that review process.
+
+9. TERMINATION OF REVIEW ACCESS.
+   Upon completion of the review process, reviewers shall discontinue use
+   of the Software. Any continued academic or research use requires
+   permission under Section 3.
+
+No rights are granted under this Section beyond those expressly stated.
 
 =========================================================================
-SECTION 3 — ACADEMIC USE — REQUIRES WRITTEN AUTHORISATION
+SECTION 3 — ACADEMIC USE OUTSIDE PEER REVIEW — REQUIRES WRITTEN AUTHORISATION
 =========================================================================
 
-Executing the code, generating datasets, training models, and evaluating
-results all require prior Written Authorisation, even for non-commercial
-personal or university research.
+Except for the peer-review and academic-evaluation activities expressly
+permitted under Section 2, executing the Software, generating datasets,
+training models, modifying the Software, or using it for independent
+academic research even for non-commercial
+personal or university research. requires prior Written Authorisation from the Author.
 
 When Written Authorisation is granted for academic use, these conditions
 ALWAYS apply and cannot be waived:
@@ -255,16 +301,16 @@ jurisdiction of the courts of Oktibbeha County, Mississippi.
 SUMMARY  (informational only — full terms above govern)
 =========================================================================
 
-  View source code for study          LIMITED — see Section 2
-  Execute / run the Software          REQUIRES WRITTEN PERMISSION
-  Academic research use               REQUIRES WRITTEN PERMISSION
-  Commercial use of any kind          REQUIRES WRITTEN PERMISSION
-  Modify the Software                 REQUIRES WRITTEN PERMISSION
-  Distribute the Software             REQUIRES WRITTEN PERMISSION
-  Create Derivative Works             REQUIRES WRITTEN PERMISSION
-  Omit paper citation in outputs      PROHIBITED
-  Remove copyright notices            PROHIBITED
-  Claim as your own work              PROHIBITED
+   View source code for study          PERMITTED — subject to Section 2
+   Peer-review execution/testing       PERMITTED — subject to Section 2
+   Reproduce manuscript results        PERMITTED — subject to Section 2
+   Independent academic research       REQUIRES WRITTEN PERMISSION
+   Commercial use of any kind          REQUIRES WRITTEN PERMISSION
+   Modify for independent research     REQUIRES WRITTEN PERMISSION
+   Distribute the Software             REQUIRES WRITTEN PERMISSION
+   Create Derivative Works             REQUIRES WRITTEN PERMISSION
+   Remove copyright notices            PROHIBITED
+   Claim as your own work              PROHIBITED
 
 To request permission: contact the Author through Mississippi State
 University before using this Software in any way beyond viewing.
