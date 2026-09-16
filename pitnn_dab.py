@@ -9,6 +9,26 @@ import math, time, warnings, argparse, random
 import numpy as np
 import matplotlib; matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+plt.rcParams.update({
+    "font.family": "serif",
+    "font.serif": ["Times New Roman"],
+    "mathtext.fontset": "stix",
+
+    "font.size": 16,
+    "axes.titlesize": 18,
+    "axes.labelsize": 17,
+    "xtick.labelsize": 15,
+    "ytick.labelsize": 15,
+    "legend.fontsize": 15,
+
+    "lines.linewidth": 2.4,
+    "axes.linewidth": 1.2,
+
+    "xtick.direction": "in",
+    "ytick.direction": "in",
+
+    "savefig.dpi": 600
+})
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -790,7 +810,8 @@ def train_pitnn(model,loss_fn,X_norm,X_raw,Y,epochs=150,batch_size=64,
     loader=DataLoader(TensorDataset(Xn_tr,Xr_tr,Ytr),batch_size=batch_size,shuffle=True,drop_last=True)
     optimizer=optim.Adam(model.parameters(),lr=lr,weight_decay=1e-5)
     scheduler=optim.lr_scheduler.CosineAnnealingLR(optimizer,epochs,eta_min=lr/20)
-    hist={k:[] for k in ["train","val","LP","LZVS"]}
+    # hist={k:[] for k in ["train","val","LP","LZVS"]}
+    hist = {k: [] for k in ["train", "val", "physics", "LP", "LZVS"]}
     best_val,best_state=float("inf"),None; model.to(device)
 
     n_p=sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -818,8 +839,13 @@ def train_pitnn(model,loss_fn,X_norm,X_raw,Y,epochs=150,batch_size=64,
             pv=model(Xn_va)
             _,vi=loss_fn(pv,Yva,Xr_va[:,-1,0],Xr_va[:,-1,1],Xr_va[:,-1,6],Xr_va[:,:,2])
         avg={k:v/max(nb,1) for k,v in ep.items()}
-        hist["train"].append(avg["L_total"]); hist["val"].append(vi["L_total"])
-        hist["LP"].append(avg["LP"]);         hist["LZVS"].append(avg["LZVS"])
+        # hist["train"].append(avg["L_total"]); hist["val"].append(vi["L_total"])
+        # hist["LP"].append(avg["LP"]);         hist["LZVS"].append(avg["LZVS"])
+        hist["train"].append(avg["L_total"])
+        hist["val"].append(vi["L_total"])
+        hist["physics"].append(avg["L_physics"])
+        hist["LP"].append(avg["LP"])
+        hist["LZVS"].append(avg["LZVS"])
         if vi["L_total"]<best_val:
             best_val=vi["L_total"]
             best_state={k:v.clone() for k,v in model.state_dict().items()}
@@ -916,101 +942,71 @@ class PITNNController:
                 "P_err_pct":abs(P-Pref)/max(abs(Pref),1)*100,"inf_us":inf_us}
 
 # PLOTS
-def plot_all(hist,dab):
-    ep=range(1,len(hist["train"])+1)
-    fig,ax=plt.subplots(1,2,figsize=(12,4))
-    ax[0].semilogy(ep,hist["train"],label="Train")
-    ax[0].semilogy(ep,hist["val"],label="Val",ls="--")
-    ax[0].set(xlabel="Epoch",ylabel="Loss (log)",title="Training Loss"); ax[0].legend()
-    ax[1].semilogy(ep,hist["LP"],label="LP (power)")
-    ax[1].semilogy(ep,hist["LZVS"],label="LZVS (ZVS)")
-    ax[1].set(xlabel="Epoch",ylabel="Physics loss",title="Physics Loss"); ax[1].legend()
-    plt.tight_layout(); plt.savefig("pitnn_training.png",dpi=150); plt.close()
+def plot_all(hist, dab):
+    ep = np.arange(1, len(hist["train"]) + 1)
+
+    # --------------------------------------------------
+    # Combined loss plot: Train + Val + LP
+    # --------------------------------------------------
+    fig, ax1 = plt.subplots(figsize=(8.5, 5.5))
+
+    # Left axis: training / validation
+    l1 = ax1.semilogy(ep, hist["train"], label="Training loss", color="C0")[0]
+    l2 = ax1.semilogy(ep, hist["val"], label="Validation loss", linestyle="--", color="C1")[0]
+
+    ax1.set_xlabel("Epoch")
+    ax1.set_ylabel("Training / Validation Loss")
+    ax1.set_title("Training, Validation, and Physics Loss")
+    ax1.grid(True, which="both", linestyle=":", alpha=0.35)
+    ax1.tick_params(axis="both", which="both", top=True, right=False)
+
+    # Right axis: physics loss (LP)
+    ax2 = ax1.twinx()
+    # l3 = ax2.semilogy(ep, hist["LP"], label="LP (physics)", color="C2")[0]
+    # ax2.set_ylabel("Physics Loss (LP)")
+    l3 = ax2.semilogy(ep, hist["physics"], label="Physics loss", color="C2")[0]
+    ax2.set_ylabel("Physics Loss")
+    ax2.tick_params(axis="y", which="both", right=True)
+
+    # Optional: add LZVS too if you want
+    # l4 = ax2.semilogy(ep, hist["LZVS"], label="LZVS", color="C3", linestyle="-.")[0]
+
+    # Combined legend
+    lines = [l1, l2, l3]
+    labels = [line.get_label() for line in lines]
+    ax1.legend(lines, labels, loc="upper right", frameon=True)
+
+    fig.tight_layout()
+    fig.savefig("pitnn_training.png", bbox_inches="tight")
+    fig.savefig("pitnn_training.pdf", bbox_inches="tight")
+    plt.close(fig)
+
     print("  Saved: pitnn_training.png")
+    print("  Saved: pitnn_training.pdf")
 
-    Yt,Yp=hist["Y_test"],hist["Y_pred"]
-    fig,axes=plt.subplots(1,3,figsize=(13,4))
-    for i,ax in enumerate(axes):
-        ax.scatter(Yt[:,i],Yp[:,i],alpha=0.4,s=8,rasterized=True)
-        lo=min(Yt[:,i].min(),Yp[:,i].min()); hi=max(Yt[:,i].max(),Yp[:,i].max())
-        ax.plot([lo,hi],[lo,hi],"r--",lw=1.2)
-        ax.set(xlabel="Optimal (rad)",ylabel="PITNN (rad)",
-               title=["φ₁ primary","φ₂ secondary","φ₃ external"][i]+" (rad)")
-    plt.suptitle("φ_TPS: PITNN vs Offline-Optimal — Test Set",y=1.02)
-    plt.tight_layout(); plt.savefig("pitnn_parity.png",dpi=150); plt.close()
-    print("  Saved: pitnn_parity.png")
+    # --------------------------------------------------
+    # Keep your parity plot below as before
+    # --------------------------------------------------
+    Yt, Yp = hist["Y_test"], hist["Y_pred"]
+    fig, axes = plt.subplots(1, 3, figsize=(13, 4.5))
 
-    plt.rcParams.update({
-    "font.size": 13,
-    "axes.titlesize": 18,
-    "axes.labelsize": 15,
-    "legend.fontsize": 13,
-    "xtick.labelsize": 12,
-    "ytick.labelsize": 12,
-    })
+    for i, ax in enumerate(axes):
+        ax.scatter(Yt[:, i], Yp[:, i], alpha=0.4, s=12, rasterized=True)
+        lo = min(Yt[:, i].min(), Yp[:, i].min())
+        hi = max(Yt[:, i].max(), Yp[:, i].max())
+        ax.plot([lo, hi], [lo, hi], "r--", lw=1.5)
+        ax.set_xlabel("Optimal (rad)")
+        ax.set_ylabel("PITNN (rad)")
+        ax.set_title(["φ₁ primary", "φ₂ secondary", "φ₃ external"][i])
+        ax.grid(True, linestyle=":", alpha=0.3)
+        ax.tick_params(top=True, right=True)
 
-    wave_cases = [
-        # (filename_suffix, [phi1, phi2, phi3])
-        # All angles verified to produce ≤ 3.3kW at V1=400V, V2=250V, n=1.6
-        ("light_load",   [PI*0.95, PI*0.95, 0.10]),   # ≈  606W  light load
-        ("half_load",    [PI*0.95, PI*0.95, 0.45]),   # ≈ 1917W  half rated
-        ("rated_load",   [PI*0.95, PI*0.95, 0.66]),   # ≈ 3301W  rated load
-        ("asym_voltage", [PI*0.85, PI*0.85, 0.65]),   # ≈ 3047W  asymmetric duty
-    ]
-
-    for case_name, phi_ex in wave_cases:
-        t, vab, nvcd, vL, iL = dab.simulate_current(*phi_ex, N_pts=800)
-        P_ex = dab.compute_power(*phi_ex)
-        mode_ex = dab.classify_mode(*phi_ex)
-
-        fig, ax = plt.subplots(3, 1, figsize=(12, 8), sharex=True)
-
-        ax[0].step(t * 1e6, vab, where="post", lw=2.2, label="v_ab")
-        ax[0].step(t * 1e6, nvcd, where="post", linestyle="--", lw=2.2, label="n·v_cd")
-        ax[0].axhline(0, color="black", lw=1.0, alpha=0.7)
-        ax[0].set_ylabel("Voltage (V)")
-        ax[0].set_title(f"TPS waveforms — P={P_ex:.0f}W  Mode {mode_ex}")
-        ax[0].legend()
-        ax[0].grid(True, alpha=0.3, linestyle="--")
-
-        ax[1].step(t * 1e6, vL, where="post", lw=2.2)
-        ax[1].axhline(0, color="black", lw=1.0, alpha=0.7)
-        ax[1].set_ylabel("v_L (V)")
-        ax[1].grid(True, alpha=0.3, linestyle="--")
-
-        ax[2].plot(t * 1e6, iL, color="red", lw=2.4)
-        ax[2].fill_between(t * 1e6, iL, 0, alpha=0.12, color="red")
-        ax[2].axhline(0, color="black", lw=1.0, alpha=0.7)
-        ax[2].set_ylabel("i_L (A)")
-        ax[2].set_xlabel("Time (µs)")
-        ax[2].grid(True, alpha=0.3, linestyle="--")
-
-        plt.tight_layout(pad=1.2)
-        plt.savefig(f"pitnn_waveforms_{case_name}.png", dpi=220, bbox_inches="tight")
-        plt.close()
-
-        print(f"  Saved: pitnn_waveforms_{case_name}.png")
-
-    phi12 = PI * 0.95
-    phi3s = np.linspace(0.05, 2.0, 100)
-    Ps = [dab.compute_power(phi12, phi12, p3) for p3 in phi3s]
-    Pm = [K_POWER * (phi12 / PI) * p3 * (1 - p3 / B_POWER) for p3 in phi3s]
-
-    fig, ax = plt.subplots(figsize=(10, 5))
-    ax.plot(phi3s, [p / 1000 for p in Ps], lw=2.4, label="Simulation")
-    ax.plot(phi3s, [p / 1000 for p in Pm], lw=2.2, ls="--", label="Calibrated model")
-    ax.axvline(PHI3_MAX, color="blue", ls=":", lw=2.0, label=f"φ₃_max={PHI3_MAX}")
-    ax.set_xlabel("φ₃ (rad)")
-    ax.set_ylabel("P (kW)")
-    ax.set_title("Power vs φ₃ | φ₂ | φ₁")
-    ax.grid(True, alpha=0.3, linestyle="--")
-    ax.legend()
-
-    plt.tight_layout(pad=1.2)
-    plt.savefig("pitnn_power_surface.png", dpi=220, bbox_inches="tight")
+    plt.tight_layout()
+    plt.savefig("pitnn_parity.png", bbox_inches="tight")
+    plt.savefig("pitnn_parity.pdf", bbox_inches="tight")
     plt.close()
-
-    print("  Saved: pitnn_power_surface.png")
+    print("  Saved: pitnn_parity.png")
+    print("  Saved: pitnn_parity.pdf")
 
 
 # MAIN
