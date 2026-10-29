@@ -1,5 +1,5 @@
 Plecs {
-  Name          "Dab_simulation_3301W_ZVS_lower_scopes_fixed"
+  Name          "Dab_simulation_3300W_ZVS_check"
   Version       "5.0"
   CircuitModel  "ContStateSpace"
   StartTime     "0.0"
@@ -66,7 +66,7 @@ Plecs {
   InvalidNetlistFunctionEvaluationMsg "1"
   IncompatibleInitialConditionMsg "2"
   Schematic {
-    Location      [0, 24; 1920, 990]
+    Location      [9, 32; 1911, 980]
     ZoomFactor    1
     SliderPosition [0, 0]
     ShowBrowser   off
@@ -4111,17 +4111,17 @@ Plecs {
       Frame         [-15, -20; 15, 20]
       Location      [0, 24; 1920, 1064]
       State         "AAAA/wAAAAD9AAAAAgAAAAEAAAAAAAAAAPwCAAAAA/sAAAAQAFoAbwBvA"
-"G0AQQByAGUAYQAAAAAA/////wAAAKgA////+wAAABQAUwBhAHYAZQBkAFYAaQBlAHcAcwAAAAAA//"
+"G0AQQByAGUAYQAAAAAA/////wAAAIAA////+wAAABQAUwBhAHYAZQBkAFYAaQBlAHcAcwAAAAAA//"
 "///wAAAGIA////+wAAAAwAVAByAGEAYwBlAHMAAAAAAP////8AAABiAP///wAAAAMAAAAAAAAAAPw"
-"BAAAAAfsAAAAUAEQAYQB0AGEAVwBpAGQAZ2V0AAAAAP////8AAABEAP///wAAB4AAAAPxAAAABAAA"
-"AAQAAAAIAAAACPwAAAABAAAAAgAAAAEAAAAOAFQAbwBvAGwAQgBhAHIBAAAAAP////8AAAAAAAAAA"
-"A=="
+"BAAAAAfsAAAAUAEQAYQB0AGEAVwBpAGQAZwBlAHQAAAAAAP////8AAABEAP///wAAB4AAAAPxAAAA"
+"BAAAAAQAAAAIAAAACPwAAAABAAAAAgAAAAEAAAAOAFQAbwBvAGwAQgBhAHIBAAAAAP////8AAAAAA"
+"AAAAA=="
       SavedViews    "AAAAAgAAAAA="
       HeaderState   "{\"DefaultSecSize\":0,\"FirstSecSize\":65,\"Labels\":[],"
 "\"VisualIdxs\":[]}"
       PlotPalettes  "AAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+"=="
       Axes          "3"
       TimeRange     "2e-05"
       ScrollingMode "1"
@@ -4244,17 +4244,17 @@ Plecs {
       Frame         [-15, -20; 15, 20]
       Location      [0, 24; 1920, 1064]
       State         "AAAA/wAAAAD9AAAAAgAAAAEAAAAAAAAAAPwCAAAAA/sAAAAQAFoAbwBvA"
-"G0AQQByAGUAYQAAAAAA/////wAAAKgA////+wAAABQAUwBhAHYAZQBkAFYAaQBlAHcAcwAAAAAA//"
+"G0AQQByAGUAYQAAAAAA/////wAAAIAA////+wAAABQAUwBhAHYAZQBkAFYAaQBlAHcAcwAAAAAA//"
 "///wAAAGIA////+wAAAAwAVAByAGEAYwBlAHMAAAAAAP////8AAABiAP///wAAAAMAAAAAAAAAAPw"
-"BAAAAAfsAAAAUAEQAYQB0AGEAVwBpAGQAZ2V0AAAAAP////8AAABEAP///wAAB4AAAAPxAAAABAAA"
-"AAQAAAAIAAAACPwAAAABAAAAAgAAAAEAAAAOAFQAbwBvAGwAQgBhAHIBAAAAAP////8AAAAAAAAAA"
-"A=="
+"BAAAAAfsAAAAUAEQAYQB0AGEAVwBpAGQAZwBlAHQAAAAAAP////8AAABEAP///wAAB4AAAAPxAAAA"
+"BAAAAAQAAAAIAAAACPwAAAABAAAAAgAAAAEAAAAOAFQAbwBvAGwAQgBhAHIBAAAAAP////8AAAAAA"
+"AAAAA=="
       SavedViews    "AAAAAgAAAAA="
       HeaderState   "{\"DefaultSecSize\":0,\"FirstSecSize\":65,\"Labels\":[],"
 "\"VisualIdxs\":[]}"
       PlotPalettes  "AAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+"=="
       Axes          "3"
       TimeRange     "2e-05"
       ScrollingMode "1"
@@ -4271,7 +4271,7 @@ Plecs {
         MaxValue      1
         Signals       {}
         SignalTypes   [ ]
-        AxisLabel     "FETD5 gate"
+        AxisLabel     "Vgs (V)"
         Untangle      0
         KeepBaseline  off
         BaselineValue 0
@@ -4283,7 +4283,7 @@ Plecs {
         MaxValue      1
         Signals       {}
         SignalTypes   [ ]
-        AxisLabel     "FETD5 Vds (V)"
+        AxisLabel     "Vds (V)"
         Untangle      0
         KeepBaseline  off
         BaselineValue 0
@@ -4295,7 +4295,7 @@ Plecs {
         MaxValue      1
         Signals       {}
         SignalTypes   [ ]
-        AxisLabel     "FETD5 current (A)"
+        AxisLabel     "current (A)"
         Untangle      0
         KeepBaseline  off
         BaselineValue 0
@@ -4347,7 +4347,7 @@ Plecs {
       Flipped       on
       LabelPosition south
       Probe {
-        Component     "Vm12"
+        Component     "Vm6"
         Path          ""
         Signals       {"Measured voltage"}
       }
@@ -4361,7 +4361,7 @@ Plecs {
       Flipped       on
       LabelPosition south
       Probe {
-        Component     "Am9"
+        Component     "Am2"
         Path          ""
         Signals       {"Measured current"}
       }
@@ -5037,9 +5037,17 @@ Plecs {
       SrcTerminal   9
       Points        [935, 605]
       Branch {
-        Points        [425, 605]
-        DstComponent  "FETD"
-        DstTerminal   3
+        Points        [520, 605]
+        Branch {
+          Points        [425, 605]
+          DstComponent  "FETD"
+          DstTerminal   3
+        }
+        Branch {
+          Points        [520, 835]
+          DstComponent  "Scope_ZVS_FETD5"
+          DstTerminal   1
+        }
       }
       Branch {
         Points        [935, 705]
@@ -5127,16 +5135,9 @@ Plecs {
       SrcTerminal   4
       Points        [1040, 655]
       Branch {
-        Points        [1035, 655; 1035, 650]
-        Branch {
-          DstComponent  "FETD5"
-          DstTerminal   3
-        }
-        Branch {
-          Points        [580, 650; 580, 835]
-          DstComponent  "Scope_ZVS_FETD5"
-          DstTerminal   1
-        }
+        Points        [1035, 655]
+        DstComponent  "FETD5"
+        DstTerminal   3
       }
       Branch {
         Points        [1040, 755]
