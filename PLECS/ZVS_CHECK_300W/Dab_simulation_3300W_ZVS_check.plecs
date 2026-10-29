@@ -1,19 +1,19 @@
 Plecs {
-  Name          "Dab_simulation_3300W_ZVS_check"
+  Name          "DAB_FETD_ZVS_direct_gate"
   Version       "5.0"
   CircuitModel  "ContStateSpace"
   StartTime     "0.0"
-  TimeSpan      "0.505"
+  TimeSpan      "0.1"
   Timeout       ""
-  Solver        "auto"
+  Solver        "radau"
   MaxStep       "0.1e-7"
   InitStep      "-1"
   FixedStep     "1e-3"
   Refine        "1"
   ZCStepSize    "1e-9"
-  RelTol        "1e-3"
-  AbsTol        "-1"
-  TurnOnThreshold "0"
+  RelTol        "1e-6"
+  AbsTol        "1e-9"
+  TurnOnThreshold "1e-3"
   NonIdealSwitchResistance "1"
   SyncFixedStepTasks "2"
   UseSingleCommonBaseRate "2"
@@ -28,7 +28,24 @@ Plecs {
   AlgebraicLoopWithStateMachineMsg "3"
   AssertionAction "1"
   FixedPointDatatypeOverride "1"
-  InitializationCommands ""
+  InitializationCommands "% Focused FETD ZVS commutation check. Source: the ne"
+"wly supplied original file.\n% Only the FETD/FETD1 leg has added dead time, C"
+"oss and separate body diodes.\n% EXAMPLE electrical values: replace using the"
+" actual MOSFET data sheet.\nFETD_check_deadtime = 100e-9;   % seconds, applie"
+"d to BOTH devices of this leg\nFETD_check_Coss = 1e-9;         % farads PER D"
+"EVICE, constant approximation\nFETD_check_Ron = 0.05;         % ohms, MOSFET "
+"channel resistance\nFETD_check_Vf = 0.8;           % volts, body-diode forwar"
+"d drop\nFETD_check_Rd = 0.01;          % ohms, body-diode slope resistance\n%"
+" The upstream TPS gate generator and PITNN/socket controller are unchanged.\n"
+"% Scope_FETD_ZVS plot 1: direct branch of the actual FETD gate wire AFTER dea"
+"d time.\n% Plot 2: FETD drain-source voltage. Plot 3: terminal current from A"
+"m2.\n% Plot 4: FETD body-diode current, positive in source-to-drain direction"
+".\n% Coss branches bypass the ideal current meters; Am2 excludes capacitor cu"
+"rrent.\n% ZVS evidence: Vds approaches zero (possibly -Vf) BEFORE FETD's gate"
+" rises.\n% Positive body-diode current during the final dead time supports th"
+"is sequence.\n% This model CHECKS ZVS; it neither forces nor assumes that ZVS"
+" occurs.\n% Stop time = 0.1 s; ZVS scope uses continuous scrolling and a 20 u"
+"s view.\n"
   InitialState  "1"
   SystemState   ""
   JacobianComputation "2"
@@ -66,9 +83,9 @@ Plecs {
   InvalidNetlistFunctionEvaluationMsg "1"
   IncompatibleInitialConditionMsg "2"
   Schematic {
-    Location      [9, 32; 1911, 980]
+    Location      [0, 23; 1920, 989]
     ZoomFactor    1
-    SliderPosition [0, 0]
+    SliderPosition [0, 15]
     ShowBrowser   off
     BrowserWidth  100
     Component {
@@ -326,7 +343,7 @@ Plecs {
       LabelPosition south
     }
     Component {
-      Type          MosfetWithDiode
+      Type          Mosfet
       Name          "FETD"
       Show          on
       Position      [460, 295]
@@ -335,7 +352,7 @@ Plecs {
       LabelPosition east
       Parameter {
         Variable      "Ron"
-        Value         "0"
+        Value         "FETD_check_Ron"
         Show          off
       }
       Parameter {
@@ -365,7 +382,7 @@ Plecs {
       }
     }
     Component {
-      Type          MosfetWithDiode
+      Type          Mosfet
       Name          "FETD1"
       Show          on
       Position      [460, 415]
@@ -374,7 +391,7 @@ Plecs {
       LabelPosition east
       Parameter {
         Variable      "Ron"
-        Value         "0"
+        Value         "FETD_check_Ron"
         Show          off
       }
       Parameter {
@@ -3968,167 +3985,474 @@ Plecs {
       }
     }
     Component {
-      Type          Scope
-      Name          "Scope_ZVS_FETD1"
+      Type          CScript
+      Name          "Deadtime_FETD"
       Show          on
-      Position      [305, 90]
+      Position      [820, 780]
+      Direction     up
+      Flipped       off
+      LabelPosition south
+      Parameter {
+        Variable      "DialogGeometry"
+        Value         "[666 453 588 556]"
+        Show          off
+      }
+      Parameter {
+        Variable      "NumInputs"
+        Value         "1"
+        Show          off
+      }
+      Parameter {
+        Variable      "NumOutputs"
+        Value         "1"
+        Show          off
+      }
+      Parameter {
+        Variable      "NumContStates"
+        Value         "0"
+        Show          off
+      }
+      Parameter {
+        Variable      "NumDiscStates"
+        Value         "1"
+        Show          off
+      }
+      Parameter {
+        Variable      "NumZCSignals"
+        Value         "0"
+        Show          off
+      }
+      Parameter {
+        Variable      "DirectFeedthrough"
+        Value         "1"
+        Show          off
+      }
+      Parameter {
+        Variable      "Ts"
+        Value         "[0, -1; -2, 0]"
+        Show          off
+      }
+      Parameter {
+        Variable      "TerminalBasedSampleTimes"
+        Value         "1"
+        Show          off
+      }
+      Parameter {
+        Variable      "Parameters"
+        Value         "FETD_check_deadtime"
+        Show          off
+      }
+      Parameter {
+        Variable      "LangStandard"
+        Value         "2"
+        Show          off
+      }
+      Parameter {
+        Variable      "GnuExtensions"
+        Value         "1"
+        Show          off
+      }
+      Parameter {
+        Variable      "RuntimeCheck"
+        Value         "2"
+        Show          off
+      }
+      Parameter {
+        Variable      "HighlightLevel"
+        Value         "0"
+        Show          off
+      }
+      Parameter {
+        Variable      "Declarations"
+        Value         "#include <float.h>\n"
+"#define PREV_INPUT DiscState(0)\n"
+"#define DELAY ParamRealData(0, 0)"
+        Show          off
+      }
+      Parameter {
+        Variable      "StartFcn"
+        Value         "if (NumParameters != 1)\n"
+"{\n"
+"  SetErrorMessage(\"One parameter required (delay time).\");\n"
+"  return;\n"
+"}\n"
+"if (ParamNumDims(0) != 2\n"
+"    || ParamDim(0, 0) != 1 || ParamDim(0, 1) != 1\n"
+"    || DELAY <= 0.)\n"
+"{\n"
+"  SetErrorMessage(\"Delay time must be a positive scalar.\");\n"
+"  return;\n"
+"}\n"
+"\n"
+"PREV_INPUT = 0.0;\n"
+"NextSampleHit = DBL_MAX;\n"
+        Show          off
+      }
+      Parameter {
+        Variable      "OutputFcn"
+        Value         "if (InputSignal(0, 0) == 0)\n"
+"{\n"
+"  OutputSignal(0, 0) = 0;\n"
+"  NextSampleHit = DBL_MAX;\n"
+"}\n"
+"else if (PREV_INPUT == 0)\n"
+"{\n"
+"  NextSampleHit = CurrentTime + DELAY;\n"
+"  if (NextSampleHit == CurrentTime)\n"
+"    NextSampleHit = CurrentTime * (1.+DBL_EPSILON);\n"
+"}\n"
+"else if (IsSampleHit(1))\n"
+"{\n"
+"  OutputSignal(0, 0) = 1;\n"
+"  NextSampleHit = DBL_MAX;\n"
+"}"
+        Show          off
+      }
+      Parameter {
+        Variable      "UpdateFcn"
+        Value         "PREV_INPUT = InputSignal(0, 0);"
+        Show          off
+      }
+      Parameter {
+        Variable      "DerivativeFcn"
+        Value         ""
+        Show          off
+      }
+      Parameter {
+        Variable      "TerminateFcn"
+        Value         ""
+        Show          off
+      }
+      Parameter {
+        Variable      "StoreCustomStateFcn"
+        Value         "WriteCustomStateDouble(NextSampleHit);"
+        Show          off
+      }
+      Parameter {
+        Variable      "RestoreCustomStateFcn"
+        Value         "NextSampleHit = ReadCustomStateDouble();"
+        Show          off
+      }
+    }
+    Component {
+      Type          CScript
+      Name          "Deadtime_FETD1"
+      Show          on
+      Position      [820, 840]
+      Direction     up
+      Flipped       off
+      LabelPosition south
+      Parameter {
+        Variable      "DialogGeometry"
+        Value         "[666 453 588 556]"
+        Show          off
+      }
+      Parameter {
+        Variable      "NumInputs"
+        Value         "1"
+        Show          off
+      }
+      Parameter {
+        Variable      "NumOutputs"
+        Value         "1"
+        Show          off
+      }
+      Parameter {
+        Variable      "NumContStates"
+        Value         "0"
+        Show          off
+      }
+      Parameter {
+        Variable      "NumDiscStates"
+        Value         "1"
+        Show          off
+      }
+      Parameter {
+        Variable      "NumZCSignals"
+        Value         "0"
+        Show          off
+      }
+      Parameter {
+        Variable      "DirectFeedthrough"
+        Value         "1"
+        Show          off
+      }
+      Parameter {
+        Variable      "Ts"
+        Value         "[0, -1; -2, 0]"
+        Show          off
+      }
+      Parameter {
+        Variable      "TerminalBasedSampleTimes"
+        Value         "1"
+        Show          off
+      }
+      Parameter {
+        Variable      "Parameters"
+        Value         "FETD_check_deadtime"
+        Show          off
+      }
+      Parameter {
+        Variable      "LangStandard"
+        Value         "2"
+        Show          off
+      }
+      Parameter {
+        Variable      "GnuExtensions"
+        Value         "1"
+        Show          off
+      }
+      Parameter {
+        Variable      "RuntimeCheck"
+        Value         "2"
+        Show          off
+      }
+      Parameter {
+        Variable      "HighlightLevel"
+        Value         "0"
+        Show          off
+      }
+      Parameter {
+        Variable      "Declarations"
+        Value         "#include <float.h>\n"
+"#define PREV_INPUT DiscState(0)\n"
+"#define DELAY ParamRealData(0, 0)"
+        Show          off
+      }
+      Parameter {
+        Variable      "StartFcn"
+        Value         "if (NumParameters != 1)\n"
+"{\n"
+"  SetErrorMessage(\"One parameter required (delay time).\");\n"
+"  return;\n"
+"}\n"
+"if (ParamNumDims(0) != 2\n"
+"    || ParamDim(0, 0) != 1 || ParamDim(0, 1) != 1\n"
+"    || DELAY <= 0.)\n"
+"{\n"
+"  SetErrorMessage(\"Delay time must be a positive scalar.\");\n"
+"  return;\n"
+"}\n"
+"\n"
+"PREV_INPUT = 0.0;\n"
+"NextSampleHit = DBL_MAX;\n"
+        Show          off
+      }
+      Parameter {
+        Variable      "OutputFcn"
+        Value         "if (InputSignal(0, 0) == 0)\n"
+"{\n"
+"  OutputSignal(0, 0) = 0;\n"
+"  NextSampleHit = DBL_MAX;\n"
+"}\n"
+"else if (PREV_INPUT == 0)\n"
+"{\n"
+"  NextSampleHit = CurrentTime + DELAY;\n"
+"  if (NextSampleHit == CurrentTime)\n"
+"    NextSampleHit = CurrentTime * (1.+DBL_EPSILON);\n"
+"}\n"
+"else if (IsSampleHit(1))\n"
+"{\n"
+"  OutputSignal(0, 0) = 1;\n"
+"  NextSampleHit = DBL_MAX;\n"
+"}"
+        Show          off
+      }
+      Parameter {
+        Variable      "UpdateFcn"
+        Value         "PREV_INPUT = InputSignal(0, 0);"
+        Show          off
+      }
+      Parameter {
+        Variable      "DerivativeFcn"
+        Value         ""
+        Show          off
+      }
+      Parameter {
+        Variable      "TerminateFcn"
+        Value         ""
+        Show          off
+      }
+      Parameter {
+        Variable      "StoreCustomStateFcn"
+        Value         "WriteCustomStateDouble(NextSampleHit);"
+        Show          off
+      }
+      Parameter {
+        Variable      "RestoreCustomStateFcn"
+        Value         "NextSampleHit = ReadCustomStateDouble();"
+        Show          off
+      }
+    }
+    Component {
+      Type          Diode
+      Name          "D_FETD"
+      Show          on
+      Position      [505, 295]
+      Direction     up
+      Flipped       off
+      LabelPosition east
+      Parameter {
+        Variable      "Vf"
+        Value         "FETD_check_Vf"
+        Show          off
+      }
+      Parameter {
+        Variable      "Ron"
+        Value         "FETD_check_Rd"
+        Show          off
+      }
+      Parameter {
+        Variable      "thermal"
+        Value         ""
+        Show          off
+      }
+      Parameter {
+        Variable      "Rth"
+        Value         "0"
+        Show          off
+      }
+      Parameter {
+        Variable      "Np"
+        Value         "1"
+        Show          off
+      }
+      Parameter {
+        Variable      "T_init"
+        Value         ""
+        Show          off
+      }
+      Parameter {
+        Variable      "SwitchModel"
+        Value         "1"
+        Show          off
+      }
+      Parameter {
+        Variable      "f_grid"
+        Value         "0"
+        Show          off
+      }
+    }
+    Component {
+      Type          Diode
+      Name          "D_FETD1"
+      Show          on
+      Position      [505, 415]
+      Direction     up
+      Flipped       off
+      LabelPosition east
+      Parameter {
+        Variable      "Vf"
+        Value         "FETD_check_Vf"
+        Show          off
+      }
+      Parameter {
+        Variable      "Ron"
+        Value         "FETD_check_Rd"
+        Show          off
+      }
+      Parameter {
+        Variable      "thermal"
+        Value         ""
+        Show          off
+      }
+      Parameter {
+        Variable      "Rth"
+        Value         "0"
+        Show          off
+      }
+      Parameter {
+        Variable      "Np"
+        Value         "1"
+        Show          off
+      }
+      Parameter {
+        Variable      "T_init"
+        Value         ""
+        Show          off
+      }
+      Parameter {
+        Variable      "SwitchModel"
+        Value         "1"
+        Show          off
+      }
+      Parameter {
+        Variable      "f_grid"
+        Value         "0"
+        Show          off
+      }
+    }
+    Component {
+      Type          Capacitor
+      Name          "Coss_FETD"
+      Show          on
+      Position      [550, 295]
       Direction     down
       Flipped       on
+      LabelPosition east
+      Parameter {
+        Variable      "C"
+        Value         "FETD_check_Coss"
+        Show          off
+      }
+      Parameter {
+        Variable      "v_init"
+        Value         "0"
+        Show          off
+      }
+    }
+    Component {
+      Type          Capacitor
+      Name          "Coss_FETD1"
+      Show          on
+      Position      [550, 445]
+      Direction     down
+      Flipped       on
+      LabelPosition east
+      Parameter {
+        Variable      "C"
+        Value         "FETD_check_Coss"
+        Show          off
+      }
+      Parameter {
+        Variable      "v_init"
+        Value         "400"
+        Show          off
+      }
+    }
+    Component {
+      Type          Scope
+      Name          "Scope_FETD_ZVS"
+      Show          on
+      Position      [1420, 820]
+      Direction     up
+      Flipped       off
       LabelPosition south
-      Frame         [-15, -20; 15, 20]
-      Location      [0, 24; 1920, 1064]
+      Frame         [-15, -25; 15, 25]
+      Location      [80, 80; 1550, 968]
       State         "AAAA/wAAAAD9AAAAAgAAAAEAAAAAAAAAAPwCAAAAA/sAAAAQAFoAbwBvA"
 "G0AQQByAGUAYQAAAAAA/////wAAAKgA////+wAAABQAUwBhAHYAZQBkAFYAaQBlAHcAcwAAAAAA//"
 "///wAAAGIA////+wAAAAwAVAByAGEAYwBlAHMAAAAAAP////8AAABiAP///wAAAAMAAAAAAAAAAPw"
-"BAAAAAfsAAAAUAEQAYQB0AGEAVwBpAGQAZ2V0AAAAAP////8AAABEAP///wAAB4AAAAPxAAAABAAA"
-"AAQAAAAIAAAACPwAAAABAAAAAgAAAAEAAAAOAFQAbwBvAGwAQgBhAHIBAAAAAP////8AAAAAAAAAA"
-"A=="
-      SavedViews    "AAAAAgAAAAA="
-      HeaderState   "{\"DefaultSecSize\":0,\"FirstSecSize\":65,\"Labels\":[],"
-"\"VisualIdxs\":[]}"
-      PlotPalettes  "AAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-      Axes          "3"
-      TimeRange     "2e-05"
-      ScrollingMode "1"
-      SingleTimeAxis "1"
-      Open          "0"
-      Ts            "-1"
-      SampleLimit   "0"
-      XAxisLabel    "Time / s"
-      ShowLegend    "1"
-      Axis {
-        Name          ""
-        AutoScale     1
-        MinValue      0
-        MaxValue      1
-        Signals       {}
-        SignalTypes   [ ]
-        AxisLabel     "FETD1 gate"
-        Untangle      0
-        KeepBaseline  off
-        BaselineValue 0
-      }
-      Axis {
-        Name          ""
-        AutoScale     1
-        MinValue      0
-        MaxValue      1
-        Signals       {}
-        SignalTypes   [ ]
-        AxisLabel     "FETD1 Vds (V)"
-        Untangle      0
-        KeepBaseline  off
-        BaselineValue 0
-      }
-      Axis {
-        Name          ""
-        AutoScale     1
-        MinValue      0
-        MaxValue      1
-        Signals       {}
-        SignalTypes   [ ]
-        AxisLabel     "FETD1 current (A)"
-        Untangle      0
-        KeepBaseline  off
-        BaselineValue 0
-      }
-      Fourier {
-        SingleXAxis       on
-        AxisLabel         "Frequency / Hz"
-        Scaling           0
-        PhaseDisplay      0
-        ShowFourierLegend off
-        Axis {
-          Name          ""
-          AutoScale     1
-          MinValue      0
-          MaxValue      1
-          Signals       {}
-          Untangle      0
-          KeepBaseline  off
-          BaselineValue 0
-        }
-        Axis {
-          Name          ""
-          AutoScale     1
-          MinValue      0
-          MaxValue      1
-          Signals       {}
-          Untangle      0
-          KeepBaseline  off
-          BaselineValue 0
-        }
-        Axis {
-          Name          ""
-          AutoScale     1
-          MinValue      0
-          MaxValue      1
-          Signals       {}
-          Untangle      0
-          KeepBaseline  off
-          BaselineValue 0
-        }
-      }
-    }
-    Component {
-      Type          PlecsProbe
-      Name          "Probe_ZVS_FETD1_V"
-      Show          on
-      Position      [420, 90]
-      Direction     right
-      Flipped       on
-      LabelPosition south
-      Probe {
-        Component     "Vm7"
-        Path          ""
-        Signals       {"Measured voltage"}
-      }
-    }
-    Component {
-      Type          PlecsProbe
-      Name          "Probe_ZVS_FETD1_I"
-      Show          on
-      Position      [420, 135]
-      Direction     right
-      Flipped       on
-      LabelPosition south
-      Probe {
-        Component     "Am4"
-        Path          ""
-        Signals       {"Measured current"}
-      }
-    }
-    Component {
-      Type          Scope
-      Name          "Scope_ZVS_FETD3"
-      Show          on
-      Position      [540, 30]
-      Direction     down
-      Flipped       on
-      LabelPosition south
-      Frame         [-15, -20; 15, 20]
-      Location      [0, 24; 1920, 1064]
-      State         "AAAA/wAAAAD9AAAAAgAAAAEAAAAAAAAAAPwCAAAAA/sAAAAQAFoAbwBvA"
-"G0AQQByAGUAYQAAAAAA/////wAAAIAA////+wAAABQAUwBhAHYAZQBkAFYAaQBlAHcAcwAAAAAA//"
-"///wAAAGIA////+wAAAAwAVAByAGEAYwBlAHMAAAAAAP////8AAABiAP///wAAAAMAAAAAAAAAAPw"
-"BAAAAAfsAAAAUAEQAYQB0AGEAVwBpAGQAZwBlAHQAAAAAAP////8AAABEAP///wAAB4AAAAPxAAAA"
+"BAAAAAfsAAAAUAEQAYQB0AGEAVwBpAGQAZwBlAHQAAAAAAP////8AAABEAP///wAABb4AAANZAAAA"
 "BAAAAAQAAAAIAAAACPwAAAABAAAAAgAAAAEAAAAOAFQAbwBvAGwAQgBhAHIBAAAAAP////8AAAAAA"
 "AAAAA=="
       SavedViews    "AAAAAgAAAAA="
       HeaderState   "{\"DefaultSecSize\":0,\"FirstSecSize\":65,\"Labels\":[],"
 "\"VisualIdxs\":[]}"
-      PlotPalettes  "AAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-"=="
-      Axes          "3"
-      TimeRange     "2e-05"
-      ScrollingMode "1"
+      PlotPalettes  "AAAAAQAAAAEAAAABAAAAAQAAAAEB//8AAAAA//8AAAAAAAEAAAABAQAAA"
+"AEAAAABAAAAAQAAAAEAAAABAAAAAAEAAAABQAAAAAAAAAAAAAABAAAAAQEAAAABAAAAAQAAAAEAAA"
+"ABAf//AAAAAP//AAAAAAABAAAAAQEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAABAAAAAUAAAAAAAAA"
+"AAAAAAQAAAAEBAAAAAQAAAAEAAAABAAAAAQH//wAAAAD//wAAAAAAAQAAAAEBAAAAAQAAAAEAAAAB"
+"AAAAAQAAAAEAAAAAAQAAAAFAAAAAAAAAAAAAAAEAAAABAQAAAAEAAAABAAAAAQAAAAEB//8AAAAA/"
+"/8AAAAAAAEAAAABAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAAEAAAABQAAAAAAAAAAAAAABAAAAAQ"
+"E="
+      Axes          "4"
+      TimeRange     "0"
+      ScrollingMode "2"
       SingleTimeAxis "1"
       Open          "0"
       Ts            "-1"
-      SampleLimit   "0"
+      SampleLimit   "200000"
       XAxisLabel    "Time / s"
       ShowLegend    "1"
       Axis {
@@ -4136,11 +4460,11 @@ Plecs {
         AutoScale     1
         MinValue      0
         MaxValue      1
-        Signals       {}
+        Signals       {"FETD actual delayed gate"}
         SignalTypes   [ ]
-        AxisLabel     "FETD3 gate"
+        AxisLabel     "FETD actual gate command (0/1)"
         Untangle      0
-        KeepBaseline  off
+        KeepBaseline  on
         BaselineValue 0
       }
       Axis {
@@ -4148,11 +4472,11 @@ Plecs {
         AutoScale     1
         MinValue      0
         MaxValue      1
-        Signals       {}
+        Signals       {"FETD Vds"}
         SignalTypes   [ ]
-        AxisLabel     "FETD3 Vds (V)"
+        AxisLabel     "FETD Vds (V)"
         Untangle      0
-        KeepBaseline  off
+        KeepBaseline  on
         BaselineValue 0
       }
       Axis {
@@ -4160,11 +4484,23 @@ Plecs {
         AutoScale     1
         MinValue      0
         MaxValue      1
-        Signals       {}
+        Signals       {"FETD terminal current"}
         SignalTypes   [ ]
-        AxisLabel     "FETD3 current (A)"
+        AxisLabel     "FETD terminal current (A)"
         Untangle      0
-        KeepBaseline  off
+        KeepBaseline  on
+        BaselineValue 0
+      }
+      Axis {
+        Name          ""
+        AutoScale     1
+        MinValue      0
+        MaxValue      1
+        Signals       {"FETD body-diode current"}
+        SignalTypes   [ ]
+        AxisLabel     "FETD body-diode current (A)"
+        Untangle      0
+        KeepBaseline  on
         BaselineValue 0
       }
       Fourier {
@@ -4178,9 +4514,9 @@ Plecs {
           AutoScale     1
           MinValue      0
           MaxValue      1
-          Signals       {}
+          Signals       {"FETD actual delayed gate"}
           Untangle      0
-          KeepBaseline  off
+          KeepBaseline  on
           BaselineValue 0
         }
         Axis {
@@ -4188,9 +4524,9 @@ Plecs {
           AutoScale     1
           MinValue      0
           MaxValue      1
-          Signals       {}
+          Signals       {"FETD Vds"}
           Untangle      0
-          KeepBaseline  off
+          KeepBaseline  on
           BaselineValue 0
         }
         Axis {
@@ -4198,167 +4534,44 @@ Plecs {
           AutoScale     1
           MinValue      0
           MaxValue      1
-          Signals       {}
+          Signals       {"FETD terminal current"}
           Untangle      0
-          KeepBaseline  off
+          KeepBaseline  on
+          BaselineValue 0
+        }
+        Axis {
+          Name          ""
+          AutoScale     1
+          MinValue      0
+          MaxValue      1
+          Signals       {"FETD body-diode current"}
+          Untangle      0
+          KeepBaseline  on
           BaselineValue 0
         }
       }
     }
     Component {
       Type          PlecsProbe
-      Name          "Probe_ZVS_FETD3_V"
+      Name          "ZVS_Vds_FETD"
       Show          on
-      Position      [670, 40]
+      Position      [1230, 790]
       Direction     right
-      Flipped       on
+      Flipped       off
       LabelPosition south
       Probe {
-        Component     "Vm8"
+        Component     "FETD"
         Path          ""
-        Signals       {"Measured voltage"}
+        Signals       {"MOSFET voltage"}
       }
     }
     Component {
       Type          PlecsProbe
-      Name          "Probe_ZVS_FETD3_I"
+      Name          "ZVS_current_FETD"
       Show          on
-      Position      [670, 95]
+      Position      [1220, 835]
       Direction     right
-      Flipped       on
-      LabelPosition south
-      Probe {
-        Component     "Am5"
-        Path          ""
-        Signals       {"Measured current"}
-      }
-    }
-    Component {
-      Type          Scope
-      Name          "Scope_ZVS_FETD5"
-      Show          on
-      Position      [400, 845]
-      Direction     down
-      Flipped       on
-      LabelPosition south
-      Frame         [-15, -20; 15, 20]
-      Location      [0, 24; 1920, 1064]
-      State         "AAAA/wAAAAD9AAAAAgAAAAEAAAAAAAAAAPwCAAAAA/sAAAAQAFoAbwBvA"
-"G0AQQByAGUAYQAAAAAA/////wAAAIAA////+wAAABQAUwBhAHYAZQBkAFYAaQBlAHcAcwAAAAAA//"
-"///wAAAGIA////+wAAAAwAVAByAGEAYwBlAHMAAAAAAP////8AAABiAP///wAAAAMAAAAAAAAAAPw"
-"BAAAAAfsAAAAUAEQAYQB0AGEAVwBpAGQAZwBlAHQAAAAAAP////8AAABEAP///wAAB4AAAAPxAAAA"
-"BAAAAAQAAAAIAAAACPwAAAABAAAAAgAAAAEAAAAOAFQAbwBvAGwAQgBhAHIBAAAAAP////8AAAAAA"
-"AAAAA=="
-      SavedViews    "AAAAAgAAAAA="
-      HeaderState   "{\"DefaultSecSize\":0,\"FirstSecSize\":65,\"Labels\":[],"
-"\"VisualIdxs\":[]}"
-      PlotPalettes  "AAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-"=="
-      Axes          "3"
-      TimeRange     "2e-05"
-      ScrollingMode "1"
-      SingleTimeAxis "1"
-      Open          "0"
-      Ts            "-1"
-      SampleLimit   "0"
-      XAxisLabel    "Time / s"
-      ShowLegend    "1"
-      Axis {
-        Name          ""
-        AutoScale     1
-        MinValue      0
-        MaxValue      1
-        Signals       {}
-        SignalTypes   [ ]
-        AxisLabel     "Vgs (V)"
-        Untangle      0
-        KeepBaseline  off
-        BaselineValue 0
-      }
-      Axis {
-        Name          ""
-        AutoScale     1
-        MinValue      0
-        MaxValue      1
-        Signals       {}
-        SignalTypes   [ ]
-        AxisLabel     "Vds (V)"
-        Untangle      0
-        KeepBaseline  off
-        BaselineValue 0
-      }
-      Axis {
-        Name          ""
-        AutoScale     1
-        MinValue      0
-        MaxValue      1
-        Signals       {}
-        SignalTypes   [ ]
-        AxisLabel     "current (A)"
-        Untangle      0
-        KeepBaseline  off
-        BaselineValue 0
-      }
-      Fourier {
-        SingleXAxis       on
-        AxisLabel         "Frequency / Hz"
-        Scaling           0
-        PhaseDisplay      0
-        ShowFourierLegend off
-        Axis {
-          Name          ""
-          AutoScale     1
-          MinValue      0
-          MaxValue      1
-          Signals       {}
-          Untangle      0
-          KeepBaseline  off
-          BaselineValue 0
-        }
-        Axis {
-          Name          ""
-          AutoScale     1
-          MinValue      0
-          MaxValue      1
-          Signals       {}
-          Untangle      0
-          KeepBaseline  off
-          BaselineValue 0
-        }
-        Axis {
-          Name          ""
-          AutoScale     1
-          MinValue      0
-          MaxValue      1
-          Signals       {}
-          Untangle      0
-          KeepBaseline  off
-          BaselineValue 0
-        }
-      }
-    }
-    Component {
-      Type          PlecsProbe
-      Name          "Probe_ZVS_FETD5_V"
-      Show          on
-      Position      [660, 845]
-      Direction     right
-      Flipped       on
-      LabelPosition south
-      Probe {
-        Component     "Vm6"
-        Path          ""
-        Signals       {"Measured voltage"}
-      }
-    }
-    Component {
-      Type          PlecsProbe
-      Name          "Probe_ZVS_FETD5_I"
-      Show          on
-      Position      [645, 890]
-      Direction     right
-      Flipped       on
+      Flipped       off
       LabelPosition south
       Probe {
         Component     "Am2"
@@ -4367,136 +4580,17 @@ Plecs {
       }
     }
     Component {
-      Type          Scope
-      Name          "Scope_ZVS_FETD6"
-      Show          on
-      Position      [315, 755]
-      Direction     down
-      Flipped       on
-      LabelPosition south
-      Frame         [-15, -20; 15, 20]
-      Location      [0, 24; 1920, 1064]
-      State         "AAAA/wAAAAD9AAAAAgAAAAEAAAAAAAAAAPwCAAAAA/sAAAAQAFoAbwBvA"
-"G0AQQByAGUAYQAAAAAA/////wAAAKgA////+wAAABQAUwBhAHYAZQBkAFYAaQBlAHcAcwAAAAAA//"
-"///wAAAGIA////+wAAAAwAVAByAGEAYwBlAHMAAAAAAP////8AAABiAP///wAAAAMAAAAAAAAAAPw"
-"BAAAAAfsAAAAUAEQAYQB0AGEAVwBpAGQAZ2V0AAAAAP////8AAABEAP///wAAB4AAAAPxAAAABAAA"
-"AAQAAAAIAAAACPwAAAABAAAAAgAAAAEAAAAOAFQAbwBvAGwAQgBhAHIBAAAAAP////8AAAAAAAAAA"
-"A=="
-      SavedViews    "AAAAAgAAAAA="
-      HeaderState   "{\"DefaultSecSize\":0,\"FirstSecSize\":65,\"Labels\":[],"
-"\"VisualIdxs\":[]}"
-      PlotPalettes  "AAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-      Axes          "3"
-      TimeRange     "2e-05"
-      ScrollingMode "1"
-      SingleTimeAxis "1"
-      Open          "0"
-      Ts            "-1"
-      SampleLimit   "0"
-      XAxisLabel    "Time / s"
-      ShowLegend    "1"
-      Axis {
-        Name          ""
-        AutoScale     1
-        MinValue      0
-        MaxValue      1
-        Signals       {}
-        SignalTypes   [ ]
-        AxisLabel     "FETD6 gate"
-        Untangle      0
-        KeepBaseline  off
-        BaselineValue 0
-      }
-      Axis {
-        Name          ""
-        AutoScale     1
-        MinValue      0
-        MaxValue      1
-        Signals       {}
-        SignalTypes   [ ]
-        AxisLabel     "FETD6 Vds (V)"
-        Untangle      0
-        KeepBaseline  off
-        BaselineValue 0
-      }
-      Axis {
-        Name          ""
-        AutoScale     1
-        MinValue      0
-        MaxValue      1
-        Signals       {}
-        SignalTypes   [ ]
-        AxisLabel     "FETD6 current (A)"
-        Untangle      0
-        KeepBaseline  off
-        BaselineValue 0
-      }
-      Fourier {
-        SingleXAxis       on
-        AxisLabel         "Frequency / Hz"
-        Scaling           0
-        PhaseDisplay      0
-        ShowFourierLegend off
-        Axis {
-          Name          ""
-          AutoScale     1
-          MinValue      0
-          MaxValue      1
-          Signals       {}
-          Untangle      0
-          KeepBaseline  off
-          BaselineValue 0
-        }
-        Axis {
-          Name          ""
-          AutoScale     1
-          MinValue      0
-          MaxValue      1
-          Signals       {}
-          Untangle      0
-          KeepBaseline  off
-          BaselineValue 0
-        }
-        Axis {
-          Name          ""
-          AutoScale     1
-          MinValue      0
-          MaxValue      1
-          Signals       {}
-          Untangle      0
-          KeepBaseline  off
-          BaselineValue 0
-        }
-      }
-    }
-    Component {
       Type          PlecsProbe
-      Name          "Probe_ZVS_FETD6_V"
+      Name          "ZVS_body_diode_FETD"
       Show          on
-      Position      [400, 735]
+      Position      [1220, 875]
       Direction     right
-      Flipped       on
+      Flipped       off
       LabelPosition south
       Probe {
-        Component     "Vm11"
+        Component     "D_FETD"
         Path          ""
-        Signals       {"Measured voltage"}
-      }
-    }
-    Component {
-      Type          PlecsProbe
-      Name          "Probe_ZVS_FETD6_I"
-      Show          on
-      Position      [400, 775]
-      Direction     right
-      Flipped       on
-      LabelPosition south
-      Probe {
-        Component     "Am11"
-        Path          ""
-        Signals       {"Measured current"}
+        Signals       {"Diode current"}
       }
     }
     Connection {
@@ -4542,6 +4636,11 @@ Plecs {
           DstTerminal   2
         }
       }
+      Branch {
+        Points        [550, 530]
+        DstComponent  "Coss_FETD1"
+        DstTerminal   2
+      }
     }
     Connection {
       Type          Wire
@@ -4578,6 +4677,11 @@ Plecs {
           DstComponent  "Vm9"
           DstTerminal   1
         }
+      }
+      Branch {
+        Points        [550, 205]
+        DstComponent  "Coss_FETD"
+        DstTerminal   1
       }
     }
     Connection {
@@ -4797,6 +4901,26 @@ Plecs {
           DstComponent  "Vm6"
           DstTerminal   2
         }
+      }
+      Branch {
+        Points        [505, 335]
+        DstComponent  "D_FETD"
+        DstTerminal   1
+      }
+      Branch {
+        Points        [505, 335]
+        DstComponent  "D_FETD1"
+        DstTerminal   2
+      }
+      Branch {
+        Points        [550, 335]
+        DstComponent  "Coss_FETD"
+        DstTerminal   2
+      }
+      Branch {
+        Points        [550, 335]
+        DstComponent  "Coss_FETD1"
+        DstTerminal   1
       }
     }
     Connection {
@@ -5033,9 +5157,9 @@ Plecs {
     }
     Connection {
       Type          Signal
-      SrcComponent  "TPS_Gate_Generator"
-      SrcTerminal   9
-      Points        [935, 605]
+      SrcComponent  "Deadtime_FETD"
+      SrcTerminal   2
+      Points        [925, 780; 925, 605]
       Branch {
         Points        [520, 605]
         Branch {
@@ -5043,37 +5167,35 @@ Plecs {
           DstComponent  "FETD"
           DstTerminal   3
         }
-        Branch {
-          Points        [520, 835]
-          DstComponent  "Scope_ZVS_FETD5"
-          DstTerminal   1
-        }
       }
       Branch {
-        Points        [935, 705]
-        DstComponent  "Scope12"
-        DstTerminal   1
+        Points        [935, 605]
+        Branch {
+          Points        [935, 705]
+          DstComponent  "Scope12"
+          DstTerminal   1
+        }
+        Branch {
+          Points        [1390, 605]
+          DstComponent  "Scope_FETD_ZVS"
+          DstTerminal   1
+        }
       }
     }
     Connection {
       Type          Signal
-      SrcComponent  "TPS_Gate_Generator"
-      SrcTerminal   8
-      Points        [950, 615]
+      SrcComponent  "Deadtime_FETD1"
+      SrcTerminal   2
+      Points        [935, 840; 935, 615]
       Branch {
         Points        [420, 615; 420, 415]
         DstComponent  "FETD1"
         DstTerminal   3
       }
       Branch {
-        Points        [950, 715]
+        Points        [950, 615; 950, 715]
         DstComponent  "Scope12"
         DstTerminal   2
-      }
-      Branch {
-        Points        [950, 75; 335, 75]
-        DstComponent  "Scope_ZVS_FETD1"
-        DstTerminal   1
       }
     }
     Connection {
@@ -5106,11 +5228,6 @@ Plecs {
         Points        [985, 735]
         DstComponent  "Scope12"
         DstTerminal   4
-      }
-      Branch {
-        Points        [985, 20]
-        DstComponent  "Scope_ZVS_FETD3"
-        DstTerminal   1
       }
     }
     Connection {
@@ -5175,11 +5292,6 @@ Plecs {
         Points        [1010, 775]
         DstComponent  "Scope12"
         DstTerminal   8
-      }
-      Branch {
-        Points        [1010, 745]
-        DstComponent  "Scope_ZVS_FETD6"
-        DstTerminal   1
       }
     }
     Connection {
@@ -5286,13 +5398,6 @@ Plecs {
       DstTerminal   1
     }
     Connection {
-      Type          Wire
-      SrcComponent  "FETD"
-      SrcTerminal   1
-      DstComponent  "Am2"
-      DstTerminal   2
-    }
-    Connection {
       Type          Signal
       SrcComponent  "Am2"
       SrcTerminal   3
@@ -5307,13 +5412,6 @@ Plecs {
       Points        [350, 445]
       DstComponent  "Scope4"
       DstTerminal   1
-    }
-    Connection {
-      Type          Wire
-      SrcComponent  "FETD1"
-      SrcTerminal   2
-      DstComponent  "Am4"
-      DstTerminal   2
     }
     Connection {
       Type          Signal
@@ -5477,7 +5575,7 @@ Plecs {
         DstTerminal   2
       }
       Branch {
-        Points        [925, 560]
+        Points        [930, 560; 930, 725]
         DstComponent  "Scope25"
         DstTerminal   1
       }
@@ -5608,65 +5706,75 @@ Plecs {
     }
     Connection {
       Type          Signal
-      SrcComponent  "Probe_ZVS_FETD1_V"
+      SrcComponent  "TPS_Gate_Generator"
+      SrcTerminal   9
+      Points        [1045, 605; 1045, 880; 775, 880]
+      DstComponent  "Deadtime_FETD"
+      DstTerminal   1
+    }
+    Connection {
+      Type          Signal
+      SrcComponent  "TPS_Gate_Generator"
+      SrcTerminal   8
+      Points        [1055, 890; 765, 890; 765, 840]
+      DstComponent  "Deadtime_FETD1"
+      DstTerminal   1
+    }
+    Connection {
+      Type          Signal
+      SrcComponent  "ZVS_Vds_FETD"
       SrcTerminal   1
-      DstComponent  "Scope_ZVS_FETD1"
+      Points        [1330, 790; 1330, 815]
+      DstComponent  "Scope_FETD_ZVS"
       DstTerminal   2
     }
     Connection {
       Type          Signal
-      SrcComponent  "Probe_ZVS_FETD1_I"
+      SrcComponent  "ZVS_current_FETD"
       SrcTerminal   1
-      Points        [355, 135; 355, 100]
-      DstComponent  "Scope_ZVS_FETD1"
+      Points        [1340, 835; 1340, 825]
+      DstComponent  "Scope_FETD_ZVS"
       DstTerminal   3
     }
     Connection {
       Type          Signal
-      SrcComponent  "Probe_ZVS_FETD3_V"
+      SrcComponent  "ZVS_body_diode_FETD"
       SrcTerminal   1
-      Points        [575, 40; 575, 30]
-      DstComponent  "Scope_ZVS_FETD3"
-      DstTerminal   2
+      Points        [1350, 875; 1350, 835]
+      DstComponent  "Scope_FETD_ZVS"
+      DstTerminal   4
     }
     Connection {
-      Type          Signal
-      SrcComponent  "Probe_ZVS_FETD3_I"
-      SrcTerminal   1
-      Points        [570, 95]
-      DstComponent  "Scope_ZVS_FETD3"
-      DstTerminal   3
+      Type          Wire
+      SrcComponent  "FETD1"
+      SrcTerminal   2
+      Points        [460, 435]
+      Branch {
+        Points        [460, 400; 330, 400; 330, 470]
+        DstComponent  "Am4"
+        DstTerminal   2
+      }
+      Branch {
+        Points        [505, 435]
+        DstComponent  "D_FETD1"
+        DstTerminal   1
+      }
     }
     Connection {
-      Type          Signal
-      SrcComponent  "Probe_ZVS_FETD5_V"
-      SrcTerminal   1
-      DstComponent  "Scope_ZVS_FETD5"
-      DstTerminal   2
-    }
-    Connection {
-      Type          Signal
-      SrcComponent  "Probe_ZVS_FETD5_I"
-      SrcTerminal   1
-      Points        [590, 890; 590, 855]
-      DstComponent  "Scope_ZVS_FETD5"
-      DstTerminal   3
-    }
-    Connection {
-      Type          Signal
-      SrcComponent  "Probe_ZVS_FETD6_V"
-      SrcTerminal   1
-      Points        [375, 755]
-      DstComponent  "Scope_ZVS_FETD6"
-      DstTerminal   2
-    }
-    Connection {
-      Type          Signal
-      SrcComponent  "Probe_ZVS_FETD6_I"
-      SrcTerminal   1
-      Points        [375, 765]
-      DstComponent  "Scope_ZVS_FETD6"
-      DstTerminal   3
+      Type          Wire
+      SrcComponent  "Am2"
+      SrcTerminal   2
+      Points        [430, 260]
+      Branch {
+        Points        [360, 260; 360, 310]
+        DstComponent  "D_FETD"
+        DstTerminal   2
+      }
+      Branch {
+        Points        [430, 275]
+        DstComponent  "FETD"
+        DstTerminal   1
+      }
     }
   }
 }
